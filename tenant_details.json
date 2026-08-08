@@ -1,0 +1,40 @@
+[
+  {
+    "instance_id": "710722693648",
+    "clinic_info": {
+      "name": "City Health Clinic",
+      "location": "Udaipur",
+      "address": "15 Hospital Road, Udaipur, Rajasthan 313001",
+      "timings": "Mon-Sat: 09:00 AM - 08:00 PM, Sunday: Closed",
+      "contact_number": "+91-9876543210"
+    },
+    "doctors": [
+      {
+        "name": "Dr. Ramesh Gupta",
+        "specialization": "General Physician"
+      },
+      {
+        "name": "Dr. Sneha Patel",
+        "specialization": "Pediatrician"
+      }
+    ],
+    "services": [
+      {
+        "name": "Standard Consultation",
+        "duration_minutes": 15,
+        "total_price": 500,
+        "booking_advance": 200
+      },
+      {
+        "name": "Complete Health Checkup",
+        "duration_minutes": 45,
+        "total_price": 1500,
+        "booking_advance": 500
+      }
+    ],
+    "policies": {
+      "booking_rules": "Patients must pay the booking advance via UPI to confirm the time slot.",
+      "cancellation": "Cancellations must be made at least 2 hours prior to the appointment for a full refund."
+    }
+  }
+]
