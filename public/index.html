@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jarvis AI Clinic Receptionist SaaS - Admin Dashboard</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-screen flex flex-col selection:bg-blue-600 selection:text-white">
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-md w-full pointer-events-none"></div>
+
+  <!-- Header Navigation -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand & Status -->
+      <div class="flex items-center gap-3">
+        <div class="bg-blue-600 p-2.5 rounded-xl text-white shadow-md shadow-blue-200">
+          <i data-lucide="stethoscope" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-extrabold text-lg tracking-tight text-slate-900">
+              Jarvis <span class="text-blue-600 font-black">AI CLINIC RECEPTIONIST</span>
+            </h1>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Live Express + Green API
+            </span>
+          </div>
+          <p class="text-xs text-slate-500 font-medium">Multi-Tenant Admin Dashboard & Queue Control OS</p>
+        </div>
+      </div>
+
+      <!-- Action Tools -->
+      <div class="flex items-center gap-3">
+        <button id="btn-seed" onclick="seedSampleQueue()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition border border-slate-200 cursor-pointer">
+          <i data-lucide="sparkles" class="w-4 h-4 text-amber-500"></i>
+          <span>Seed Demo Queue</span>
+        </button>
+
+        <button onclick="fetchQueueState()" class="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition border border-slate-200 cursor-pointer" title="Refresh Queue State">
+          <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Dashboard Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Multi-Tenant Selection Bar -->
+    <section class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        
+        <div>
+          <div class="flex items-center gap-1.5 text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">
+            <i data-lucide="building-2" class="w-3.5 h-3.5"></i>
+            <span>MULTI-TENANT CLINIC CONTEXT</span>
+          </div>
+          <h2 id="clinic-display-name" class="text-xl font-black text-slate-900 flex items-center gap-2">
+            Metro Dental & Medical Center
+            <span id="clinic-id-tag" class="text-xs font-mono font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+              clinic-metro-dental
+            </span>
+          </h2>
+          <p id="clinic-specialty" class="text-xs font-medium text-slate-500">Dentistry, Orthodontics & General Practice</p>
+        </div>
+
+        <!-- Clinic Switcher Pills -->
+        <div class="flex flex-wrap items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
+          <button onclick="switchClinic('clinic-metro-dental', 'Metro Dental & Medical Center')" class="clinic-btn active px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer bg-blue-600 text-white shadow-xs">
+            Metro Dental
+          </button>
+          <button onclick="switchClinic('clinic-city-health', 'City Health General Clinic')" class="clinic-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 cursor-pointer">
+            City Health
+          </button>
+          <button onclick="switchClinic('clinic-careplus', 'CarePlus Specialist Hospital')" class="clinic-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 cursor-pointer">
+            CarePlus
+          </button>
+
+          <!-- Custom Tenant Input -->
+          <div class="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+            <input id="input-custom-tenant" type="text" placeholder="Custom clinicId..." class="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-600 w-32" />
+            <button onclick="switchCustomTenant()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg cursor-pointer">
+              Set
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Department & Date Selector -->
+      <div class="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4 text-xs">
+        
+        <div class="flex items-center gap-3">
+          <span class="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Department:</span>
+          <div id="dept-btn-container" class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+            <span class="px-3 py-1 text-slate-400">Loading...</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 text-slate-600">
+          <i data-lucide="calendar" class="w-4 h-4 text-slate-400"></i>
+          <span class="font-bold">Queue Date:</span>
+          <input id="input-queue-date" type="date" onchange="fetchQueueState()" class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-mono font-bold text-slate-800" />
+        </div>
+
+      </div>
+    </section>
+
+    <!-- LIVE QUEUE METRICS BAR -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+      
+      <!-- Current Token -->
+      <div class="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">CURRENT TOKEN</p>
+        <div class="flex items-baseline gap-2 mt-1">
+          <span id="metric-current-token" class="text-3xl font-black text-blue-600">#--</span>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-1 font-medium">Currently in room</p>
+      </div>
+
+      <!-- Last Issued Token -->
+      <div class="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">LAST ISSUED</p>
+        <div class="flex items-baseline gap-2 mt-1">
+          <span id="metric-last-token" class="text-3xl font-black text-slate-800">#--</span>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-1 font-medium">Total registered</p>
+      </div>
+
+      <!-- Delay Minutes -->
+      <div class="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">DELAY STATUS</p>
+        <div class="flex items-baseline gap-1 mt-1">
+          <span id="metric-delay-minutes" class="text-3xl font-black text-amber-600">+0</span>
+          <span class="text-xs font-bold text-amber-600">mins</span>
+        </div>
+        <p id="metric-delay-label" class="text-[11px] text-slate-500 mt-1 font-medium">Normal Schedule</p>
+      </div>
+
+      <!-- Avg Consult Time -->
+      <div class="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">AVG CONSULT</p>
+        <div class="flex items-baseline gap-1 mt-1">
+          <span id="metric-avg-time" class="text-3xl font-black text-slate-800">12</span>
+          <span class="text-xs font-bold text-slate-500">mins</span>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-1 font-medium">Estimated pace</p>
+      </div>
+
+      <!-- Priority Queue Count -->
+      <div class="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">VIP / EMERGENCY</p>
+        <div class="flex items-baseline gap-2 mt-1">
+          <span id="metric-priority-count" class="text-3xl font-black text-rose-600">0</span>
+          <span class="text-xs font-bold text-rose-600">tokens</span>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-1 font-medium">Prioritized in line</p>
+      </div>
+
+      <!-- Human Handoff Count -->
+      <div class="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">HUMAN HANDOFF</p>
+        <div class="flex items-baseline gap-2 mt-1">
+          <span id="metric-handoff-count" class="text-3xl font-black text-purple-600">0</span>
+          <span class="text-xs font-bold text-purple-600">patients</span>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-1 font-medium">AI bot muted</p>
+      </div>
+
+    </div>
+
+    <!-- ACTION CONTROLS PANEL -->
+    <section class="bg-gradient-to-r from-slate-900 to-slate-950 text-white rounded-2xl p-6 shadow-xl space-y-6">
+      
+      <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div class="flex items-center gap-2">
+          <div class="p-2 bg-blue-600 rounded-xl text-white">
+            <i data-lucide="zap" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-lg font-black tracking-tight">Clinic Receptionist Action Controls</h3>
+            <p class="text-xs text-slate-400 font-medium">Triggers backend atomic operations & WhatsApp Green API notifications</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 text-xs text-slate-400 font-mono">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+          <span>Firestore Transactions Active</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- Action 1: Next Patient / Advance Queue -->
+        <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center gap-2 text-xs font-bold text-blue-400 uppercase tracking-wider">
+              <i data-lucide="user-check" class="w-4 h-4"></i>
+              <span>1. QUEUE DISPATCH</span>
+            </div>
+            <h4 class="text-base font-extrabold text-white mt-1">Advance Queue / Call Next Patient</h4>
+            <p class="text-xs text-slate-300 mt-1">
+              Advances <code class="bg-slate-900 px-1 py-0.5 rounded text-blue-300">currentToken</code>. First checks priority queue, sends WhatsApp notification via Green API, and updates patient status.
+            </p>
+          </div>
+
+          <button id="btn-advance" onclick="advanceQueue()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-3.5 px-6 rounded-xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer">
+            <i data-lucide="play-circle" class="w-5 h-5"></i>
+            <span>ADVANCE QUEUE & CALL NEXT</span>
+          </button>
+        </div>
+
+        <!-- Action 2: Delay Trigger -->
+        <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
+              <i data-lucide="clock" class="w-4 h-4"></i>
+              <span>2. DELAY BROADCAST</span>
+            </div>
+            <h4 class="text-base font-extrabold text-white mt-1">Announce Clinic Delay</h4>
+            <p class="text-xs text-slate-300 mt-1">
+              Sets delay minutes and broadcasts a WhatsApp message via Green API to all waiting patients.
+            </p>
+          </div>
+
+          <div class="space-y-2">
+            <!-- Preset Delay Buttons -->
+            <div class="grid grid-cols-4 gap-1.5">
+              <button onclick="setDelay(15)" class="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs rounded-lg cursor-pointer">+15m</button>
+              <button onclick="setDelay(30)" class="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs rounded-lg cursor-pointer">+30m</button>
+              <button onclick="setDelay(60)" class="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs rounded-lg cursor-pointer">+1 hr</button>
+              <button onclick="setDelay(0)" class="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold text-xs rounded-lg cursor-pointer">Reset</button>
+            </div>
+
+            <!-- Custom Input -->
+            <div class="flex items-center gap-2">
+              <input id="input-custom-delay" type="number" placeholder="Minutes (e.g. 45)..." class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 flex-1" />
+              <button onclick="triggerCustomDelay()" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-lg cursor-pointer">
+                Broadcast
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action 3: Emergency / VIP Token Prioritization -->
+        <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center gap-2 text-xs font-bold text-rose-400 uppercase tracking-wider">
+              <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+              <span>3. EMERGENCY VIP PRIORITIZATION</span>
+            </div>
+            <h4 class="text-base font-extrabold text-white mt-1">Move Token to Front of Line</h4>
+            <p class="text-xs text-slate-300 mt-1">
+              Pushes token into <code class="bg-slate-900 px-1 py-0.5 rounded text-rose-300">priorityQueue</code> array so they are called on the next advance.
+            </p>
+          </div>
+
+          <div class="space-y-2">
+            <div class="flex items-center gap-2">
+              <input id="input-priority-token" type="number" placeholder="Token # (e.g. 104)..." class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 flex-1" />
+              <button onclick="prioritizeToken()" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-lg shadow-md cursor-pointer flex items-center gap-1">
+                <i data-lucide="arrow-up" class="w-4 h-4"></i>
+                <span>Prioritize</span>
+              </button>
+            </div>
+            <p class="text-[10px] text-slate-400">Notifies patient on WhatsApp that their token is prioritized.</p>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- TWO COLUMN LAYOUT: Live Queue & Human Handoff Panel -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Column 1 & 2: Live Patients Queue Table -->
+      <div class="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+        
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center gap-2">
+            <h3 class="font-extrabold text-slate-900 text-base">Live Patient Queue List</h3>
+            <span id="queue-badge-count" class="bg-blue-600 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+              0 Patients
+            </span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-slate-500 font-bold flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" id="chk-auto-poll" checked onchange="toggleAutoPoll()" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+              <span>Auto-Poll (5s)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Patients List Table / Cards -->
+        <div id="queue-list-container" class="space-y-3">
+          <!-- Dynamically Populated by JS -->
+          <div class="p-8 text-center text-slate-400">
+            <i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto text-blue-600 mb-2"></i>
+            <p class="text-xs font-bold uppercase tracking-wider">Fetching live queue from Express backend...</p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Column 3: Dedicated Human Handoff & Patient Un-muting Panel -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 flex flex-col justify-between">
+        
+        <div class="space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div class="flex items-center gap-2 text-purple-700">
+              <i data-lucide="user-x" class="w-5 h-5"></i>
+              <h3 class="font-extrabold text-slate-900 text-base">Human Handoff Panel</h3>
+            </div>
+            <span id="handoff-badge" class="bg-purple-100 text-purple-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-purple-200">
+              0 Stuck
+            </span>
+          </div>
+
+          <p class="text-xs text-slate-500 leading-relaxed">
+            Patients currently flagged in <code class="bg-slate-100 text-purple-700 px-1 rounded font-mono">human_handling</code> mode due to complex queries. Click <strong>Un-mute AI Bot</strong> to reset state back to <code class="bg-slate-100 text-emerald-700 px-1 rounded font-mono">idle</code> so Jarvis AI Receptionist can resume auto-replies.
+          </p>
+
+          <!-- List of Patients in Human Handoff -->
+          <div id="handoff-list-container" class="space-y-3">
+            <!-- Dynamically Populated -->
+            <p class="text-xs text-slate-400 italic text-center py-6">No patients currently stuck in human handoff.</p>
+          </div>
+        </div>
+
+        <!-- Green API Delivery Log Feed -->
+        <div class="pt-4 border-t border-slate-100 space-y-2">
+          <div class="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider">
+            <span>WhatsApp Green API Activity Log</span>
+            <i data-lucide="message-square" class="w-3.5 h-3.5 text-blue-600"></i>
+          </div>
+
+          <div id="green-api-logs" class="bg-slate-950 text-slate-300 font-mono text-[11px] p-3 rounded-xl max-h-36 overflow-y-auto space-y-1">
+            <div class="text-slate-500">[System] Green API Webhook Listener initialized.</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 mt-8">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 font-medium gap-2">
+      <div>Jarvis AI Clinic Receptionist SaaS Admin Dashboard &bull; Multi-Tenant Isolated Architecture</div>
+      <div class="flex items-center gap-4">
+        <span>Render / Node.js Express Backend</span>
+        <span>Firebase Firestore</span>
+        <span>Green API WhatsApp</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Dashboard JavaScript Logic -->
+  <script>
+    // State Variables
+    let activeClinicId = 'clinic-metro-dental';
+    let activeClinicName = 'Metro Dental & Medical Center';
+    let activeDepartment = 'Dentistry';
+    let currentQueueData = null;
+    let pollInterval = null;
+
+    // Set Today's Date default
+    document.getElementById('input-queue-date').value = new Date().toISOString().split('T')[0];
+
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    // Toast Notification System
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      
+      const bgColor = type === 'error' ? 'bg-rose-600' : type === 'success' ? 'bg-emerald-600' : 'bg-slate-800';
+      toast.className = `${bgColor} text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between text-xs font-bold transition-all duration-300 pointer-events-auto transform translate-y-2 opacity-0`;
+      
+      toast.innerHTML = `
+        <div class="flex items-center gap-2">
+          <i data-lucide="${type === 'error' ? 'alert-circle' : 'check-circle'}" class="w-4 h-4"></i>
+          <span>${message}</span>
+        </div>
+        <button onclick="this.parentElement.remove()" class="text-white/80 hover:text-white ml-3">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      `;
+      
+      container.appendChild(toast);
+      lucide.createIcons({ props: {}, nameAttr: 'data-lucide' });
+
+      // Animate in
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0');
+        setTimeout(() => toast.remove(), 300);
+      }, 4500);
+    }
+
+    // Logger for Green API feed
+    function logGreenApi(msg) {
+      const logContainer = document.getElementById('green-api-logs');
+      const time = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.innerHTML = `<span class="text-slate-500">[${time}]</span> <span class="text-emerald-400">${msg}</span>`;
+      logContainer.appendChild(line);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // Fetch Live Queue State from Express API
+    async function fetchQueueState() {
+      const date = document.getElementById('input-queue-date').value;
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/queue?department=${encodeURIComponent(activeDepartment)}&date=${encodeURIComponent(date)}`;
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} fetching queue`);
+        }
+        const data = await response.json();
+        if (data.success && data.queue) {
+          currentQueueData = data.queue;
+          renderQueueMetrics(data.queue);
+          renderQueueList(data.queue.queueList || []);
+        }
+      } catch (err) {
+        console.error('Error fetching queue state:', err);
+        showToast(`Failed to connect to backend: ${err.message}`, 'error');
+      }
+
+      // Also fetch Human Handoff list
+      fetchHumanHandoff();
+    }
+
+    // Fetch Human Handoff list
+    async function fetchHumanHandoff() {
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/human-handoff`;
+      try {
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          renderHumanHandoffList(data.patients || []);
+          document.getElementById('handoff-badge').innerText = `${data.count || 0} Stuck`;
+          document.getElementById('metric-handoff-count').innerText = data.count || 0;
+        }
+      } catch (err) {
+        console.error('Error fetching human handoff:', err);
+      }
+    }
+
+    // Render Metrics
+    function renderQueueMetrics(q) {
+      document.getElementById('metric-current-token').innerText = `#${q.currentToken || 100}`;
+      document.getElementById('metric-last-token').innerText = `#${q.lastIssuedToken || 100}`;
+      
+      const delay = q.delayMinutes || 0;
+      document.getElementById('metric-delay-minutes').innerText = `+${delay}`;
+      document.getElementById('metric-delay-label').innerText = delay > 0 ? `${delay}m Clinic Delay Active` : 'Normal Schedule';
+      
+      document.getElementById('metric-avg-time').innerText = q.avgConsultMinutes || 12;
+      
+      const pList = Array.isArray(q.priorityQueue) ? q.priorityQueue : [];
+      document.getElementById('metric-priority-count').innerText = pList.length;
+    }
+
+    // Render Main Queue List Cards
+    function renderQueueList(patients) {
+      const container = document.getElementById('queue-list-container');
+      document.getElementById('queue-badge-count').innerText = `${patients.length} Patients`;
+
+      if (!patients || patients.length === 0) {
+        container.innerHTML = `
+          <div class="p-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+            <p class="text-xs font-bold text-slate-500">No patients in queue for ${activeDepartment}.</p>
+            <button onclick="seedSampleQueue()" class="mt-2 text-xs font-bold text-blue-600 hover:underline">Click here to seed demo queue</button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = patients.map((p, idx) => {
+        const isCurrent = p.status === 'in-consultation';
+        const isCompleted = p.status === 'completed';
+        const isPriority = p.priority || (currentQueueData?.priorityQueue || []).includes(p.tokenNumber);
+
+        let borderClass = 'border-slate-200 bg-white';
+        let badgeBg = 'bg-slate-100 text-slate-700';
+        let badgeText = `Waiting (#${idx + 1})`;
+
+        if (isCurrent) {
+          borderClass = 'border-blue-500 bg-blue-50/50 shadow-md';
+          badgeBg = 'bg-blue-600 text-white font-black';
+          badgeText = 'IN CONSULTATION ROOM';
+        } else if (isPriority) {
+          borderClass = 'border-rose-400 bg-rose-50/40';
+          badgeBg = 'bg-rose-600 text-white font-black';
+          badgeText = 'VIP / EMERGENCY PRIORITY';
+        } else if (isCompleted) {
+          borderClass = 'border-slate-200 bg-slate-50/50 opacity-60';
+          badgeBg = 'bg-emerald-100 text-emerald-800';
+          badgeText = 'Completed';
+        }
+
+        return `
+          <div class="border rounded-xl p-4 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${borderClass}">
+            <div class="flex items-center gap-4">
+              <div class="w-14 h-14 ${isCurrent ? 'bg-blue-600 text-white' : isPriority ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white'} rounded-xl flex flex-col items-center justify-center font-black shrink-0">
+                <span class="text-[8px] opacity-75">TKN</span>
+                <span class="text-xl leading-none">#${p.tokenNumber}</span>
+              </div>
+
+              <div>
+                <div class="flex items-center gap-2">
+                  <h4 class="font-extrabold text-base text-slate-900">${p.patientName}</h4>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded ${badgeBg}">${badgeText}</span>
+                </div>
+                <p class="text-xs text-slate-500 mt-0.5 font-medium">${p.reason || 'General Checkup'} &bull; Phone: ${p.phone || 'N/A'}</p>
+                ${p.aiNotes ? `<p class="text-[11px] text-slate-400 mt-1 font-mono">AI Note: ${p.aiNotes}</p>` : ''}
+              </div>
+            </div>
+
+            <div class="text-right shrink-0">
+              <span class="text-xs font-bold text-slate-600 block">${p.doctorName || 'General Practitioner'}</span>
+              <span class="text-[10px] text-slate-400 block">${p.department || activeDepartment}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      lucide.createIcons();
+    }
+
+    // Render Human Handoff List
+    function renderHumanHandoffList(patients) {
+      const container = document.getElementById('handoff-list-container');
+      if (!patients || patients.length === 0) {
+        container.innerHTML = `
+          <div class="p-6 text-center bg-slate-50 rounded-xl border border-slate-200">
+            <p class="text-xs font-bold text-emerald-700">✓ All AI Receptionist interactions healthy.</p>
+            <p class="text-[11px] text-slate-400 mt-0.5">No patients currently stuck in human handoff.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = patients.map((p) => `
+        <div class="border border-purple-200 bg-purple-50/50 rounded-xl p-3.5 space-y-2">
+          <div class="flex items-center justify-between">
+            <h5 class="font-bold text-xs text-purple-950">${p.patientName} (TKN #${p.tokenNumber || 'N/A'})</h5>
+            <span class="text-[10px] font-mono font-bold bg-purple-200 text-purple-800 px-2 py-0.5 rounded">
+              ${p.phone || 'No Phone'}
+            </span>
+          </div>
+
+          <p class="text-[11px] text-slate-700 bg-white p-2 rounded border border-purple-100 font-mono">
+            "${p.lastQuery || p.aiNotes || 'Complex query requiring receptionist intervention'}"
+          </p>
+
+          <button onclick="unmutePatient('${p.id}', '${p.phone || ''}')" class="w-full bg-purple-700 hover:bg-purple-800 text-white font-bold py-2 rounded-lg text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+            <i data-lucide="mic" class="w-3.5 h-3.5"></i>
+            <span>Resolve & Un-mute AI Bot</span>
+          </button>
+        </div>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    // API ACTION 1: Advance Queue
+    async function advanceQueue() {
+      const btn = document.getElementById('btn-advance');
+      btn.disabled = true;
+      btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i><span>Advancing Queue...</span>`;
+
+      const date = document.getElementById('input-queue-date').value;
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/advance`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ department: activeDepartment, date })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`Advanced queue! Token #${data.queue.currentToken} called.`, 'success');
+          logGreenApi(`[Advance Notification] Sent WhatsApp alert for Token #${data.queue.currentToken}`);
+          fetchQueueState();
+        } else {
+          showToast(data.error || 'Failed to advance queue', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i data-lucide="play-circle" class="w-5 h-5"></i><span>ADVANCE QUEUE & CALL NEXT</span>`;
+        lucide.createIcons();
+      }
+    }
+
+    // API ACTION 2: Set Delay
+    async function setDelay(minutes) {
+      const date = document.getElementById('input-queue-date').value;
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/delay`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ department: activeDepartment, date, delayMinutes: minutes })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`Set delay to +${minutes} minutes. Broadcasted to patients.`, 'success');
+          logGreenApi(`[Delay Broadcast] Sent +${minutes}m delay WhatsApp alert to waiting queue.`);
+          fetchQueueState();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function triggerCustomDelay() {
+      const val = document.getElementById('input-custom-delay').value;
+      if (val !== '') {
+        setDelay(parseInt(val, 10));
+        document.getElementById('input-custom-delay').value = '';
+      }
+    }
+
+    // API ACTION 3: Prioritize Token
+    async function prioritizeToken() {
+      const tokenInput = document.getElementById('input-priority-token');
+      const tokenNumber = tokenInput.value;
+      if (!tokenNumber) {
+        showToast('Please enter a valid Token number to prioritize', 'error');
+        return;
+      }
+
+      const date = document.getElementById('input-queue-date').value;
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/prioritize`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ department: activeDepartment, date, tokenNumber: parseInt(tokenNumber, 10), reason: 'Emergency Priority' })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`Token #${tokenNumber} moved to front of Priority Queue!`, 'success');
+          logGreenApi(`[Priority Update] Token #${tokenNumber} moved to front. WhatsApp alert dispatched.`);
+          tokenInput.value = '';
+          fetchQueueState();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // API ACTION 4: Un-mute Patient
+    async function unmutePatient(patientId, phone) {
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/unmute`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ patientId, phone })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Patient un-muted. AI Assistant Jarvis is re-engaged.', 'success');
+          logGreenApi(`[Bot Unmuted] Re-engaged Jarvis AI Receptionist for patient.`);
+          fetchQueueState();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Seed Sample Queue
+    async function seedSampleQueue() {
+      const date = document.getElementById('input-queue-date').value;
+      const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/seed`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ department: activeDepartment, date })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`Seeded sample queue for ${activeClinicName}!`, 'success');
+          fetchQueueState();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Clinic Context Switcher
+    function switchClinic(id, name) {
+      activeClinicId = id;
+      activeClinicName = name;
+
+      document.getElementById('clinic-display-name').childNodes[0].nodeValue = `${name} `;
+      document.getElementById('clinic-id-tag').innerText = id;
+
+      document.querySelectorAll('.clinic-btn').forEach(btn => {
+        btn.classList.remove('bg-blue-600', 'text-white', 'shadow-xs');
+        btn.classList.add('bg-white', 'text-slate-600');
+        if (btn.innerText.trim().toLowerCase().includes(name.split(' ')[0].toLowerCase())) {
+          btn.classList.add('bg-blue-600', 'text-white', 'shadow-xs');
+          btn.classList.remove('bg-white', 'text-slate-600');
+        }
+      });
+
+      fetchQueueState();
+      loadDepartments();
+    }
+
+    function switchCustomTenant() {
+      const val = document.getElementById('input-custom-tenant').value.trim();
+      if (val) {
+        switchClinic(val, val.replace(/-/g, ' ').toUpperCase());
+        document.getElementById('input-custom-tenant').value = '';
+      }
+    }
+
+    // Department Switcher
+    function setDepartment(dept) {
+      activeDepartment = dept;
+      document.querySelectorAll('.dept-btn').forEach(btn => {
+        btn.classList.remove('bg-white', 'text-blue-600', 'shadow-xs');
+        btn.classList.add('text-slate-600');
+        if (btn.innerText.trim() === dept) {
+          btn.classList.add('bg-white', 'text-blue-600', 'shadow-xs');
+          btn.classList.remove('text-slate-600');
+        }
+      });
+      fetchQueueState();
+    }
+
+    // Loads the clinic's REAL departments from the backend instead of
+    // guessing/hardcoding — this is what actually keeps the dashboard in
+    // sync with whatever department names the bot is really booking into.
+    async function loadDepartments() {
+      const container = document.getElementById('dept-btn-container');
+      container.innerHTML = '<span class="px-3 py-1 text-slate-400">Loading...</span>';
+      try {
+        const res = await fetch(`/api/clinic/${encodeURIComponent(activeClinicId)}/departments`);
+        const data = await res.json();
+        const departments = (data.departments && data.departments.length) ? data.departments : ['General Medicine'];
+
+        container.innerHTML = departments.map((dept, i) =>
+          `<button onclick="setDepartment('${dept.replace(/'/g, "\\'")}')" class="dept-btn ${i === 0 ? 'active bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'} px-3 py-1 rounded-lg font-bold cursor-pointer">${dept}</button>`
+        ).join('');
+
+        activeDepartment = departments[0];
+        fetchQueueState();
+      } catch (err) {
+        container.innerHTML = '<span class="px-3 py-1 text-red-500">Failed to load departments</span>';
+        showToast('Could not load departments for this clinic', 'error');
+      }
+    }
+
+    // Auto Polling Setup
+    function toggleAutoPoll() {
+      const chk = document.getElementById('chk-auto-poll');
+      if (chk.checked) {
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    }
+
+    function startPolling() {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(fetchQueueState, 5000);
+    }
+
+    function stopPolling() {
+      if (pollInterval) clearInterval(pollInterval);
+    }
+
+    // Initial Load
+    loadDepartments();
+    startPolling();
+  </script>
+</body>
+</html>

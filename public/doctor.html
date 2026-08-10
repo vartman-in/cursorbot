@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jarvis AI Clinic - Doctor Clinical & Financial Suite</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased min-h-screen flex flex-col selection:bg-cyan-600 selection:text-white">
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-md w-full pointer-events-none"></div>
+
+  <!-- Header Navigation -->
+  <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-xl">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <div class="flex items-center gap-3">
+        <div class="bg-cyan-600 p-2.5 rounded-xl text-white shadow-lg shadow-cyan-900/50">
+          <i data-lucide="stethoscope" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-extrabold text-lg tracking-tight text-white">
+              Jarvis <span class="text-cyan-400 font-black">DOCTOR PORTAL</span>
+            </h1>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+              <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+              Clinical & Rx Suite
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 font-medium">Multi-Tenant Doctor Clinical Workspace & Financial Ledger</p>
+        </div>
+      </div>
+
+      <!-- Navigation & Controls -->
+      <div class="flex items-center gap-3">
+        <!-- 3-Tier Switcher -->
+        <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+          <a href="/" class="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-white transition">
+            Receptionist OS
+          </a>
+          <a href="/doctor.html" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-600 text-white shadow-sm">
+            Doctor Portal
+          </a>
+          <a href="/patient.html" class="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-white transition">
+            Patient Track
+          </a>
+        </div>
+
+        <button onclick="fetchDoctorDashboard()" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition border border-slate-700 cursor-pointer" title="Refresh Dashboard">
+          <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Doctor Context Bar -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider mb-1">
+          <i data-lucide="building-2" class="w-4 h-4"></i>
+          <span>CLINIC & DOCTOR CONTEXT</span>
+        </div>
+        <h2 id="doc-clinic-name" class="text-xl font-black text-white flex items-center gap-2">
+          Metro Dental & Medical Center
+          <span id="doc-clinic-id" class="text-xs font-mono font-bold px-2.5 py-0.5 rounded bg-slate-950 text-cyan-300 border border-slate-800">
+            clinic-metro-dental
+          </span>
+        </h2>
+        <p class="text-xs text-slate-400 mt-0.5">Department: <span id="doc-dept-label" class="text-slate-200 font-semibold">Dentistry</span></p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <select id="select-doctor-name" onchange="fetchDoctorDashboard()" class="bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-cyan-500">
+          <option value="Dr. Robert Chen">Dr. Robert Chen (Chief Specialist)</option>
+          <option value="Dr. Sarah Jenkins">Dr. Sarah Jenkins (Senior Surgeon)</option>
+          <option value="Dr. Emily Watson">Dr. Emily Watson (Pediatric Specialist)</option>
+        </select>
+
+        <select id="select-dept" onchange="fetchDoctorDashboard()" class="bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-cyan-500">
+          <option value="Dentistry">Dentistry</option>
+          <option value="Orthodontics">Orthodontics</option>
+          <option value="General Practice">General Practice</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- FINANCIAL LEDGER GRID -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Total Revenue -->
+      <div class="bg-emerald-950/30 border border-emerald-800/50 rounded-2xl p-5 shadow-lg">
+        <div class="flex items-center justify-between text-emerald-400 text-xs font-black uppercase tracking-wider mb-1">
+          <span>TOTAL COLLECTED TODAY</span>
+          <i data-lucide="dollar-sign" class="w-4 h-4"></i>
+        </div>
+        <div id="fin-total" class="text-3xl font-black text-emerald-200">$0</div>
+        <p class="text-[11px] text-emerald-400/80 mt-1">Daily Consultation Fee Revenue</p>
+      </div>
+
+      <!-- UPI / Online -->
+      <div class="bg-indigo-950/30 border border-indigo-800/50 rounded-2xl p-5 shadow-lg">
+        <div class="flex items-center justify-between text-indigo-400 text-xs font-black uppercase tracking-wider mb-1">
+          <span>UPI / ONLINE PAYMENTS</span>
+          <i data-lucide="credit-card" class="w-4 h-4"></i>
+        </div>
+        <div id="fin-online" class="text-3xl font-black text-indigo-200">$0</div>
+        <p id="fin-online-sub" class="text-[11px] text-indigo-300 mt-1">Digital Settlements</p>
+      </div>
+
+      <!-- Cash Ledger -->
+      <div class="bg-amber-950/30 border border-amber-800/50 rounded-2xl p-5 shadow-lg">
+        <div class="flex items-center justify-between text-amber-400 text-xs font-black uppercase tracking-wider mb-1">
+          <span>CASH LEDGER</span>
+          <i data-lucide="banknote" class="w-4 h-4"></i>
+        </div>
+        <div id="fin-cash" class="text-3xl font-black text-amber-200">$0</div>
+        <p class="text-[11px] text-amber-300 mt-1">Desk Cash Handled</p>
+      </div>
+
+      <!-- Pending Fees -->
+      <div class="bg-rose-950/30 border border-rose-800/50 rounded-2xl p-5 shadow-lg">
+        <div class="flex items-center justify-between text-rose-400 text-xs font-black uppercase tracking-wider mb-1">
+          <span>PENDING SETTLEMENTS</span>
+          <i data-lucide="alert-circle" class="w-4 h-4"></i>
+        </div>
+        <div id="fin-pending" class="text-3xl font-black text-rose-200">$0</div>
+        <p id="fin-pending-count" class="text-[11px] text-rose-300 mt-1">0 Patients Pending</p>
+      </div>
+    </div>
+
+    <!-- MAIN CLINICAL WORKSPACE -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      
+      <!-- Queue Column (5 cols) -->
+      <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h3 class="font-extrabold text-white text-base flex items-center gap-2">
+            <i data-lucide="user-check" class="w-4 h-4 text-cyan-400"></i>
+            Today's Queue List
+          </h3>
+          <span id="queue-badge-count" class="bg-cyan-950 text-cyan-300 border border-cyan-800 text-xs font-bold px-2.5 py-0.5 rounded-full">
+            0 Patients
+          </span>
+        </div>
+
+        <div id="doctor-queue-container" class="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+          <div class="p-8 text-center text-slate-500">
+            <i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-400"></i>
+            <p class="text-xs uppercase font-bold">Loading Queue...</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prescription & Clinical Notes Column (7 cols) -->
+      <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+        
+        <div id="consultation-active-header" class="flex items-center justify-between border-b border-slate-800 pb-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <span id="active-token-tag" class="bg-cyan-500 text-slate-950 font-mono font-black text-xs px-2.5 py-0.5 rounded">
+                Token #--
+              </span>
+              <h3 id="active-patient-name" class="text-lg font-extrabold text-white">Select a Patient</h3>
+            </div>
+            <p id="active-complaint" class="text-xs text-slate-400 mt-1">Chief Complaint: None selected</p>
+          </div>
+
+          <button id="btn-patient-history" onclick="showHistoryModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1.5 cursor-pointer">
+            <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+            <span>Medical History</span>
+          </button>
+        </div>
+
+        <!-- Clinical Notes Input -->
+        <div class="space-y-1.5">
+          <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="stethoscope" class="w-4 h-4 text-cyan-400"></i>
+            <span>Doctor Clinical Diagnosis & Symptoms</span>
+          </label>
+          <textarea id="input-doctor-notes" placeholder="Record diagnosis, symptoms, clinical observations..." rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500 font-sans"></textarea>
+        </div>
+
+        <!-- Digital Prescription Rx -->
+        <div class="space-y-1.5">
+          <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="file-text" class="w-4 h-4 text-emerald-400"></i>
+            <span>Digital Prescription Builder (Rx)</span>
+          </label>
+          <textarea id="input-prescriptions" placeholder="1. Amoxicillin 500mg - 1 Tab twice daily x 5 days..." rows="4" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-emerald-200 font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500"></textarea>
+        </div>
+
+        <!-- Fee & Payment Recording -->
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+          <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="dollar-sign" class="w-4 h-4 text-amber-400"></i>
+            <span>Fee Amount & Payment Mode</span>
+          </h4>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div>
+              <label class="text-slate-400 block mb-1">Fee Amount ($/₹)</label>
+              <input id="input-fee-amount" type="number" value="50" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-bold focus:outline-none focus:border-amber-500" />
+            </div>
+
+            <div>
+              <label class="text-slate-400 block mb-1">Payment Mode</label>
+              <select id="select-payment-mode" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-bold focus:outline-none focus:border-amber-500">
+                <option value="UPI">UPI / QR Code</option>
+                <option value="Cash">Cash Desk</option>
+                <option value="Online">Online / Card</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="text-slate-400 block mb-1">Payment Status</label>
+              <select id="select-payment-status" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white font-bold focus:outline-none focus:border-amber-500">
+                <option value="paid">Paid</option>
+                <option value="pending">Pending Desk</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Save Actions -->
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button onclick="saveDoctorNotes(false)" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 cursor-pointer">
+            Save Draft Notes
+          </button>
+
+          <button onclick="saveDoctorNotes(true)" class="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black rounded-xl shadow-lg shadow-emerald-950/50 flex items-center gap-2 cursor-pointer">
+            <i data-lucide="send" class="w-4 h-4"></i>
+            <span>Complete & Send WhatsApp Rx</span>
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Patient History Modal -->
+  <div id="history-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <i data-lucide="book-open" class="w-5 h-5 text-cyan-400"></i>
+          <span>Patient Visit Medical History</span>
+        </h3>
+        <button onclick="hideHistoryModal()" class="text-slate-400 hover:text-white text-sm font-bold">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <span class="text-slate-400">Patient Name:</span>
+          <p id="hist-patient-name" class="font-bold text-white text-sm">--</p>
+        </div>
+        <div>
+          <span class="text-slate-400">Phone:</span>
+          <p id="hist-patient-phone" class="font-mono text-cyan-300">--</p>
+        </div>
+        <div>
+          <span class="text-slate-400">Past Symptoms & Reason:</span>
+          <p id="hist-patient-reason" class="text-slate-300 bg-slate-950 p-3 rounded-lg border border-slate-800">--</p>
+        </div>
+        <div>
+          <span class="text-slate-400">Doctor Notes & Diagnosis:</span>
+          <p id="hist-patient-notes" class="text-slate-300 bg-slate-950 p-3 rounded-lg border border-slate-800">--</p>
+        </div>
+        <div>
+          <span class="text-slate-400">Previous Digital Prescription:</span>
+          <p id="hist-patient-rx" class="text-emerald-300 font-mono bg-slate-950 p-3 rounded-lg border border-slate-800 whitespace-pre-wrap">--</p>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <button onclick="hideHistoryModal()" class="px-4 py-2 bg-slate-800 text-slate-200 text-xs font-bold rounded-xl">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let activeClinicId = 'clinic-metro-dental';
+    let currentAppointments = [];
+    let selectedAppointment = null;
+
+    lucide.createIcons();
+
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `${type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'} text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between text-xs font-bold pointer-events-auto`;
+      toast.innerHTML = `<span>${msg}</span><button onclick="this.parentElement.remove()" class="ml-3">✕</button>`;
+      container.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    }
+
+    async function fetchDoctorDashboard() {
+      const docName = document.getElementById('select-doctor-name').value;
+      const dept = document.getElementById('select-dept').value;
+      const url = `/api/doctor/${encodeURIComponent(activeClinicId)}/dashboard?department=${encodeURIComponent(dept)}&doctorName=${encodeURIComponent(docName)}`;
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.success) {
+          renderFinancialLedger(data.financialLedger);
+          renderQueueList(data.appointments || []);
+          if (data.appointments && data.appointments.length > 0 && !selectedAppointment) {
+            selectPatient(data.appointments[0]);
+          }
+        }
+      } catch (err) {
+        showToast('Error loading doctor portal: ' + err.message, 'error');
+      }
+    }
+
+    function renderFinancialLedger(fin) {
+      if (!fin) return;
+      document.getElementById('fin-total').innerText = `$${fin.totalCollected.toLocaleString()}`;
+      document.getElementById('fin-online').innerText = `$${(fin.upiPayments + fin.onlinePayments).toLocaleString()}`;
+      document.getElementById('fin-cash').innerText = `$${fin.cashPayments.toLocaleString()}`;
+      document.getElementById('fin-pending').innerText = `$${fin.pendingAmount.toLocaleString()}`;
+      document.getElementById('fin-pending-count').innerText = `${fin.pendingCount} Patients Pending`;
+    }
+
+    function renderQueueList(apps) {
+      currentAppointments = apps;
+      const container = document.getElementById('doctor-queue-container');
+      document.getElementById('queue-badge-count').innerText = `${apps.length} Patients`;
+
+      if (!apps || apps.length === 0) {
+        container.innerHTML = `<p class="text-xs text-slate-500 text-center py-6">No appointments today.</p>`;
+        return;
+      }
+
+      container.innerHTML = apps.map((a) => {
+        const isSelected = selectedAppointment?.id === a.id;
+        const isInConsult = a.status === 'in-consultation';
+        return `
+          <div onclick='selectPatient(${JSON.stringify(a).replace(/'/g, "&apos;")})' class="p-3.5 rounded-xl border transition cursor-pointer ${
+            isSelected ? 'bg-cyan-950/60 border-cyan-500 shadow-md' : isInConsult ? 'bg-emerald-950/40 border-emerald-600/60' : 'bg-slate-950 border-slate-800'
+          }">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <span class="px-2 py-0.5 rounded font-mono font-bold text-xs ${isInConsult ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-cyan-300'}">
+                  #${a.tokenNumber || '---'}
+                </span>
+                <div>
+                  <h4 class="font-bold text-xs text-white">${a.patientName}</h4>
+                  <p class="text-[11px] text-slate-400">${a.reason || 'Checkup'}</p>
+                </div>
+              </div>
+              <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded ${a.status === 'completed' ? 'bg-slate-800 text-slate-400' : 'bg-amber-950 text-amber-300'}">
+                ${a.status || 'waiting'}
+              </span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      lucide.createIcons();
+    }
+
+    function selectPatient(a) {
+      selectedAppointment = a;
+      document.getElementById('active-token-tag').innerText = `Token #${a.tokenNumber || '---'}`;
+      document.getElementById('active-patient-name').innerText = a.patientName;
+      document.getElementById('active-complaint').innerText = `Chief Complaint: ${a.reason || 'General Checkup'}`;
+
+      document.getElementById('input-doctor-notes').value = a.doctorNotes || a.aiNotes || '';
+      document.getElementById('input-prescriptions').value = a.prescriptions || '1. Amoxicillin 500mg - 1 Tab twice daily x 5 days\n2. Paracetamol 650mg - 1 Tab as needed for pain';
+      document.getElementById('input-fee-amount').value = a.feeAmount || 50;
+      document.getElementById('select-payment-mode').value = a.paymentMode || 'UPI';
+      document.getElementById('select-payment-status').value = a.paymentStatus || 'paid';
+    }
+
+    async function saveDoctorNotes(markCompleted) {
+      if (!selectedAppointment) return;
+
+      const doctorNotes = document.getElementById('input-doctor-notes').value;
+      const prescriptions = document.getElementById('input-prescriptions').value;
+      const feeAmount = Number(document.getElementById('input-fee-amount').value);
+      const paymentMode = document.getElementById('select-payment-mode').value;
+      const paymentStatus = document.getElementById('select-payment-status').value;
+
+      try {
+        const res = await fetch('/api/doctor/notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clinicId: activeClinicId,
+            appointmentId: selectedAppointment.id,
+            doctorNotes,
+            prescriptions,
+            feeAmount,
+            paymentMode,
+            paymentStatus,
+            markCompleted
+          })
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          showToast(markCompleted ? `Completed Token #${selectedAppointment.tokenNumber}! WhatsApp Rx Dispatched.` : 'Notes Saved!', 'success');
+          fetchDoctorDashboard();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function showHistoryModal() {
+      if (!selectedAppointment) return;
+      document.getElementById('hist-patient-name').innerText = selectedAppointment.patientName;
+      document.getElementById('hist-patient-phone').innerText = selectedAppointment.phone || 'N/A';
+      document.getElementById('hist-patient-reason').innerText = selectedAppointment.reason || 'General Consult';
+      document.getElementById('hist-patient-notes').innerText = selectedAppointment.doctorNotes || selectedAppointment.aiNotes || 'No notes recorded';
+      document.getElementById('hist-patient-rx').innerText = selectedAppointment.prescriptions || 'No prescription recorded';
+      document.getElementById('history-modal').classList.remove('hidden');
+    }
+
+    function hideHistoryModal() {
+      document.getElementById('history-modal').classList.add('hidden');
+    }
+
+    fetchDoctorDashboard();
+  </script>
+</body>
+</html>

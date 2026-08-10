@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jarvis Patient Track & Live Queue Portal</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased min-h-screen flex flex-col justify-between selection:bg-indigo-600 selection:text-white">
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <!-- Header -->
+  <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-xl">
+    <div class="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <div class="bg-indigo-600 p-2 rounded-xl text-white shadow-md">
+          <i data-lucide="building-2" class="w-4 h-4"></i>
+        </div>
+        <div>
+          <h1 class="font-extrabold text-sm text-white">Jarvis Live Patient Portal</h1>
+          <p class="text-[10px] text-slate-400 font-medium">Real-Time Queue Tracking & Rx Access</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-bold">
+        <a href="/" class="px-2 py-1 text-slate-400 hover:text-white">OS</a>
+        <a href="/doctor.html" class="px-2 py-1 text-slate-400 hover:text-white">Doctor</a>
+        <a href="/patient.html" class="px-2 py-1 bg-indigo-600 text-white rounded-lg">Patient</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Patient Mobile Container -->
+  <main class="flex-1 max-w-md w-full mx-auto px-4 py-5 space-y-4">
+
+    <!-- Search / Phone Input -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-2">
+      <label class="text-xs font-bold text-slate-300 block">Track Appointment Token</label>
+      <div class="relative">
+        <input id="input-chat-id" type="text" value="demo-patient-102" placeholder="Phone or Token ID..." class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-20 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500" />
+        <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
+        <button onclick="fetchPatientStatus()" class="absolute right-1 top-1 bottom-1 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition cursor-pointer">
+          Track
+        </button>
+      </div>
+    </div>
+
+    <!-- Operating Schedule Status Badge -->
+    <div id="schedule-badge" class="p-3.5 rounded-2xl border flex items-center justify-between text-xs font-bold bg-emerald-950/40 border-emerald-800/60 text-emerald-300">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+        <span id="schedule-label">Clinic Open & Accepting Patients</span>
+      </div>
+      <span id="schedule-hours" class="font-mono text-[10px] text-slate-400">08:00 AM - 08:00 PM</span>
+    </div>
+
+    <!-- Live Token Hero Display Card -->
+    <div class="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-6 shadow-2xl text-center space-y-5">
+      <div>
+        <span id="patient-dept" class="bg-indigo-950 text-indigo-300 text-xs font-bold px-3 py-1 rounded-full border border-indigo-800">
+          Dentistry
+        </span>
+        <h2 id="patient-name" class="text-xl font-black text-white mt-2">Eleanor Vance</h2>
+        <p id="doctor-assigned" class="text-xs text-slate-400 mt-0.5">Doctor: Dr. Sarah Jenkins</p>
+      </div>
+
+      <!-- Token Sequence Display -->
+      <div class="grid grid-cols-2 gap-3 py-2 border-y border-slate-800">
+        <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800">
+          <span class="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Now Serving</span>
+          <div id="now-serving" class="text-3xl font-black font-mono text-emerald-400 mt-1">#100</div>
+        </div>
+
+        <div class="bg-indigo-950/50 p-4 rounded-2xl border border-indigo-500/40 ring-1 ring-indigo-500/30">
+          <span class="text-[10px] font-black text-indigo-300 uppercase tracking-wider block">Your Token</span>
+          <div id="your-token" class="text-3xl font-black font-mono text-indigo-300 mt-1">#102</div>
+        </div>
+      </div>
+
+      <!-- Estimated Wait Time Countdown -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-around">
+        <div>
+          <span class="text-[11px] text-slate-400 block">Patients Ahead</span>
+          <span id="tokens-ahead" class="text-lg font-black text-white font-mono">2</span>
+        </div>
+
+        <div class="h-7 w-px bg-slate-800"></div>
+
+        <div>
+          <span class="text-[11px] text-slate-400 block">Est. Wait Time</span>
+          <span id="est-wait-time" class="text-lg font-black text-amber-300 font-mono">~24 min</span>
+        </div>
+      </div>
+
+      <!-- Self-Service Action Buttons -->
+      <div class="grid grid-cols-2 gap-3 pt-1">
+        <button onclick="openModal('reschedule')" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 font-bold text-xs rounded-xl border border-slate-700 flex items-center justify-center gap-1.5 cursor-pointer">
+          <i data-lucide="calendar" class="w-3.5 h-3.5"></i> Reschedule
+        </button>
+
+        <button onclick="openModal('cancel')" class="w-full py-2.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 font-bold text-xs rounded-xl border border-rose-800/60 flex items-center justify-center gap-1.5 cursor-pointer">
+          <i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Cancel
+        </button>
+      </div>
+    </div>
+
+    <!-- Doctor Notes / Digital Prescription View -->
+    <div id="rx-container" class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+      <h3 class="text-xs font-bold text-white flex items-center gap-2">
+        <i data-lucide="file-text" class="w-4 h-4 text-emerald-400"></i>
+        <span>Digital Prescription & Visit Notes</span>
+      </h3>
+      <div id="patient-notes-box" class="bg-slate-950 p-3 rounded-xl text-xs text-slate-300 border border-slate-800"></div>
+      <div id="patient-rx-box" class="bg-slate-950 p-3 rounded-xl text-xs text-emerald-300 font-mono border border-slate-800 whitespace-pre-wrap"></div>
+    </div>
+
+  </main>
+
+  <!-- Self-Service Modal -->
+  <div id="action-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-xs w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+        <h3 id="modal-title" class="text-sm font-extrabold text-white">Reschedule Visit</h3>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white text-sm font-bold">✕</button>
+      </div>
+
+      <div id="reschedule-fields" class="space-y-3 text-xs">
+        <div>
+          <label class="text-slate-400 block mb-1">Select Date</label>
+          <input id="input-new-date" type="date" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white font-bold focus:outline-none focus:border-indigo-500" />
+        </div>
+        <div>
+          <label class="text-slate-400 block mb-1">Select Time Slot</label>
+          <select id="select-new-slot" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white font-bold focus:outline-none focus:border-indigo-500">
+            <option value="09:30 AM">09:30 AM</option>
+            <option value="11:00 AM">11:00 AM</option>
+            <option value="02:30 PM">02:30 PM</option>
+            <option value="04:00 PM">04:00 PM</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="cancel-fields" class="hidden text-xs">
+        <label class="text-slate-400 block mb-1">Reason for Cancellation</label>
+        <textarea id="input-reason" placeholder="Schedule conflict..." rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white placeholder-slate-600 focus:outline-none focus:border-rose-500"></textarea>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-1">
+        <button onclick="closeModal()" class="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Back</button>
+        <button onclick="submitAction()" class="px-4 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-xl">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="text-center py-4 text-[11px] text-slate-500 font-medium border-t border-slate-900">
+    Powered by Jarvis AI Clinic SaaS • Multi-Tenant Engine
+  </footer>
+
+  <script>
+    let currentPatientData = null;
+    let currentAction = 'reschedule';
+
+    lucide.createIcons();
+
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `${type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'} text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between text-xs font-bold pointer-events-auto`;
+      toast.innerHTML = `<span>${msg}</span><button onclick="this.parentElement.remove()" class="ml-3">✕</button>`;
+      container.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    }
+
+    async function fetchPatientStatus() {
+      const chatId = document.getElementById('input-chat-id').value;
+      if (!chatId) return;
+
+      try {
+        const res = await fetch(`/api/patient/status/${encodeURIComponent(chatId)}`);
+        const data = await res.json();
+
+        if (data.success) {
+          currentPatientData = data;
+          document.getElementById('patient-dept').innerText = data.patient.department || 'General Care';
+          document.getElementById('patient-name').innerText = data.patient.patientName || 'Valued Patient';
+          document.getElementById('doctor-assigned').innerText = `Doctor: ${data.patient.doctorName || 'Dr. Specialist'}`;
+
+          document.getElementById('now-serving').innerText = `#${data.liveQueue.nowServing}`;
+          document.getElementById('your-token').innerText = `#${data.liveQueue.yourToken}`;
+          document.getElementById('tokens-ahead').innerText = data.liveQueue.tokensAhead;
+          document.getElementById('est-wait-time').innerText = `~${data.liveQueue.estimatedWaitMinutes} min`;
+
+          if (data.patient.doctorNotes || data.patient.prescriptions) {
+            document.getElementById('rx-container').classList.remove('hidden');
+            document.getElementById('patient-notes-box').innerText = data.patient.doctorNotes || 'Routine checkup.';
+            document.getElementById('patient-rx-box').innerText = data.patient.prescriptions || 'No prescription.';
+          }
+        } else {
+          showToast(data.error || 'Token record not found', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function openModal(action) {
+      currentAction = action;
+      document.getElementById('modal-title').innerText = action === 'reschedule' ? 'Reschedule Visit' : 'Cancel Visit';
+      document.getElementById('reschedule-fields').classList.toggle('hidden', action !== 'reschedule');
+      document.getElementById('cancel-fields').classList.toggle('hidden', action !== 'cancel');
+      document.getElementById('action-modal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('action-modal').classList.add('hidden');
+    }
+
+    async function submitAction() {
+      if (!currentPatientData?.patient?.id) return;
+
+      const newDate = document.getElementById('input-new-date').value;
+      const newSlot = document.getElementById('select-new-slot').value;
+      const reason = document.getElementById('input-reason').value;
+
+      try {
+        const res = await fetch('/api/patient/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatId: document.getElementById('input-chat-id').value,
+            appointmentId: currentPatientData.patient.id,
+            action: currentAction,
+            newDate,
+            newSlot,
+            reason
+          })
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          showToast(data.message, 'success');
+          closeModal();
+          fetchPatientStatus();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    fetchPatientStatus();
+  </script>
+</body>
+</html>
