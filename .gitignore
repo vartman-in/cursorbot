@@ -1,0 +1,22 @@
+# Dependencies and local runtime output
+node_modules/
+logs/
+*.log
+
+# Environment secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+firebase-service-account*.json
+
+# Operating-system and editor artifacts
+.DS_Store
+.vscode/
+.idea/
+
+# Test and coverage output
+coverage/
+.nyc_output/

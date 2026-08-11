@@ -13,8 +13,15 @@ const { db } = require('../db');
 const queueService = require('../services/queueService');
 const { resolveClinicContext } = require('../services/clinicContextService');
 const { PatientService } = require('../services/patientService');
-const { DEPARTMENTS } = require('../services/appointmentService');
+const {
+    DEPARTMENTS,
+    getSlotsForDate,
+    getNextAvailableDates,
+    bookFutureAppointment,
+    displaySlot,
+} = require('../services/appointmentService');
 const { getLiveTokenAvailability, buildClosedHoursReply } = require('../services/clinicHoursService');
+const { triageMessage, getEmergencyReply, getUrgentReply } = require('../services/triageService');
 
 // Quick keyword pre-check for status queries
 const STATUS_PHRASES = [
@@ -72,6 +79,48 @@ function resolveDepartment(entities, clinicData) {
     const match = clinicDepartments.find((d) => d.toLowerCase() === requested.toLowerCase());
     if (match) return match;
     return clinicDepartments[0];
+}
+
+function istDateIso(now = new Date()) {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function addDaysIso(date, days) {
+    const target = new Date(`${date}T00:00:00Z`);
+    target.setUTCDate(target.getUTCDate() + days);
+    return target.toISOString().slice(0, 10);
+}
+
+function parseAppointmentDate(message, now = new Date()) {
+    const input = String(message || '').trim().toLowerCase();
+    const direct = input.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+    if (direct) return direct[1];
+    const today = istDateIso(now);
+    if (/\b(aaj|today)\b/.test(input)) return today;
+    if (/\b(kal|tomorrow)\b/.test(input)) return addDaysIso(today, 1);
+    return null;
+}
+
+function parseAppointmentTime(message) {
+    const input = String(message || '').trim().toLowerCase();
+    const match = input.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b/);
+    if (!match) return null;
+    let hour = Number(match[1]);
+    const minute = Number(match[2] || 0);
+    const suffix = (match[3] || '').replace(/\./g, '');
+    if (minute > 59 || hour > 23 || (!suffix && hour > 23)) return null;
+    if (suffix === 'pm' && hour < 12) hour += 12;
+    if (suffix === 'am' && hour === 12) hour = 0;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function appointmentDatePrompt(nextOpening) {
+    const opening = nextOpening ? `${nextOpening.year}-${String(nextOpening.month).padStart(2, '0')}-${String(nextOpening.day).padStart(2, '0')}` : null;
+    return `Namastey sir, abhi live token issue nahi ho sakta. Aap future appointment book kar sakte hain. ` +
+        `Kripya appointment ki date YYYY-MM-DD format mein bhejein${opening ? ` (next opening: ${opening})` : ''}.`;
 }
 
 // 🕒 Real-Time Clinic Schedule Guard — prevents the bot from handing out a
@@ -361,6 +410,25 @@ router.post('/', async (req, res) => {
 
         // CASE C: RETURNING PATIENT INTERACTION
         const patientName = patient.name;
+
+        // Consent controls are deterministic and apply before any LLM call.
+        // STOP suppresses non-essential outreach; START restores consent.
+        if (/^\s*(stop|unsubscribe|opt[ -]?out|band karo)\s*$/i.test(patientMessage)) {
+            responseText = 'Aapko non-essential WhatsApp updates bhejna band kar diya gaya hai. Zaroori appointment messages ke liye aap kabhi bhi START reply kar sakte hain.';
+            await patients.createOrUpdate(chatId, { communicationConsent: false, consentUpdatedAt: new Date() });
+            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+            await sendMessage(chatId, responseText);
+            return;
+        }
+        if (/^\s*(start|subscribe)\s*$/i.test(patientMessage)) {
+            responseText = 'Thank you. Aapke WhatsApp updates phir se enabled hain.';
+            await patients.createOrUpdate(chatId, { communicationConsent: true, consentUpdatedAt: new Date() });
+            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+            await sendMessage(chatId, responseText);
+            return;
+        }
         logger.info(`[Webhook] Recognized returning patient: ${patientName} (${chatId})`);
 
         // Backfill clinicId for patients created before this field existed —
@@ -387,9 +455,12 @@ router.post('/', async (req, res) => {
         const clinicId = clinicData?.clinicId || null;
         const liveStatus = clinicId ? await queueService.getPatientStatus(chatId) : null;
 
-        // Emergency Detection & Human Handoff
-        const isEmergency = intent === 'human_handoff' || 
-                           (entities.symptoms && entities.symptoms.some(s => 
+        // Deterministic safety screen runs in parallel with LLM classification.
+        // The classifier may assist, but it never has authority to suppress a
+        // high-risk phrase that requires escalation.
+        const safetyScreen = triageMessage(patientMessage);
+        const isEmergency = safetyScreen.level === 'emergency' || intent === 'human_handoff' ||
+                           (entities.symptoms && entities.symptoms.some(s =>
                                ['chest pain', 'bleeding', 'breathing', 'unconscious', 'emergency'].includes(s.toLowerCase())
                            ));
 
@@ -397,7 +468,7 @@ router.post('/', async (req, res) => {
         // 🛑 EMERGENCY LOOP BYPASS
         // ==========================================
         if (isEmergency) {
-            responseText = "🚨 *URGENT:* I've detected a situation that may require immediate medical attention. \n\nI am alerting our human medical staff right now. If this is a life-threatening emergency, please call emergency services immediately.";
+            responseText = getEmergencyReply();
             nextState = 'human_handling';
             
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
@@ -416,6 +487,85 @@ router.post('/', async (req, res) => {
             await sendMessage(chatId, responseText);
             logger.info(`[Webhook] Emergency response sent to ${chatId}. Halted further processing.`);
             return; 
+        }
+
+        // Urgent-but-not-emergency messages are escalated to staff without
+        // claiming a diagnosis or blocking the patient's future messages.
+        else if (safetyScreen.level === 'urgent') {
+            responseText = getUrgentReply();
+            nextState = 'idle';
+            const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+            await alertStaff(chatId, patientName, 'Urgent symptom review requested', transcript, clinicData?.clinicId || instanceId);
+        }
+
+        // Future appointment state: date selection. This is intentionally
+        // deterministic and runs before token logic, so a closed clinic never
+        // turns a future visit request into a same-day queue token.
+        else if (patient.currentFlowState === 'awaiting_appointment_date') {
+            if (/\b(cancel|stop|nahi)\b/i.test(patientMessage)) {
+                responseText = 'Appointment booking cancelled. Jab aap ready hon, kripya date ke saath dobara message karein.';
+                nextState = 'idle';
+                await patients.createOrUpdate(chatId, { bookingDetails: null });
+            } else {
+                const date = parseAppointmentDate(patientMessage);
+                if (!date) {
+                    responseText = 'Kripya appointment date YYYY-MM-DD format mein bhejein, jaise 2026-08-10. Aap “kal” bhi likh sakte hain.';
+                    nextState = 'awaiting_appointment_date';
+                } else {
+                    const department = patient.bookingDetails?.department || resolveDepartment(entities, clinicData);
+                    const slots = getSlotsForDate({ clinicData, department, date });
+                    if (!slots.length) {
+                        const nextDates = await getNextAvailableDates({ clinicData, fromDate: addDaysIso(date, 1), days: 14 });
+                        responseText = nextDates.length
+                            ? `Is date par clinic appointment ke liye available nahi hai. Next available date: ${nextDates[0]}. Kripya apni preferred date YYYY-MM-DD mein bhejein.`
+                            : 'Abhi appointment dates available nahi hain. Kripya clinic reception se sampark karein.';
+                        nextState = 'awaiting_appointment_date';
+                    } else {
+                        await patients.createOrUpdate(chatId, { bookingDetails: { department, date, doctorName: patient.bookingDetails?.doctorName || null } });
+                        responseText = `Aapke liye ${department} mein ${date} ko yeh time slots available hain: ${slots.slice(0, 8).map(displaySlot).join(', ')}. Kripya exact time bhejein, jaise 10:00 AM.`;
+                        nextState = 'awaiting_appointment_time';
+                    }
+                }
+            }
+        }
+
+        // Future appointment state: a final selected slot is atomically
+        // reserved in Firestore so two patients cannot take it simultaneously.
+        else if (patient.currentFlowState === 'awaiting_appointment_time') {
+            if (/\b(cancel|stop|nahi)\b/i.test(patientMessage)) {
+                responseText = 'Appointment booking cancelled. Jab aap ready hon, kripya dobara message karein.';
+                nextState = 'idle';
+                await patients.createOrUpdate(chatId, { bookingDetails: null });
+            } else {
+                const bookingDetails = patient.bookingDetails || {};
+                const selectedTime = parseAppointmentTime(patientMessage);
+                if (!bookingDetails.date || !selectedTime) {
+                    responseText = 'Kripya listed time mein se exact time bhejein, jaise 10:00 AM. Date change karne ke liye “cancel” likhkar booking dobara shuru karein.';
+                    nextState = 'awaiting_appointment_time';
+                } else {
+                    try {
+                        const appointment = await bookFutureAppointment({
+                            clinicId,
+                            clinicData,
+                            patientId: chatId,
+                            patientName,
+                            phone: senderPhone,
+                            department: bookingDetails.department,
+                            date: bookingDetails.date,
+                            time: selectedTime,
+                            doctorName: bookingDetails.doctorName,
+                            reason: patientMessage,
+                        });
+                        responseText = `✅ Appointment confirmed for ${appointment.department} on ${appointment.date} at ${displaySlot(appointment.time)}. Appointment ID: ${appointment.id}. Kripya 10 minutes pehle pahunchiye.`;
+                        nextState = 'idle';
+                        await patients.createOrUpdate(chatId, { bookingDetails: null, latestAppointmentId: appointment.id });
+                    } catch (error) {
+                        logger.warn(`[Appointment] Could not reserve future slot for ${chatId}: ${error.message}`);
+                        responseText = `Yeh slot available nahi raha: ${error.message} Kripya another available time choose karein.`;
+                        nextState = 'awaiting_appointment_time';
+                    }
+                }
+            }
         }
         
         // Real-Time Status Query
@@ -477,18 +627,16 @@ router.post('/', async (req, res) => {
                 history.push({ role: 'user', content: patientMessage });
                 responseText = await generateResponse(history, instanceId, clinicData);
                 nextState = 'booking_in_progress';
-            } else if (!isClinicOpen(clinicData)) {
-                // 🛑 Don't hand out a live token when nobody's there to serve it.
-                responseText = buildClosedMessage(clinicData);
-                nextState = 'idle';
             } else {
                 // Server-side guardrail: the LLM may describe timings, but only
                 // this deterministic check may authorize a live token.
                 const availability = getLiveTokenAvailability(clinicData);
                 if (!availability.canIssueLiveToken) {
-                    responseText = buildClosedHoursReply(clinicData);
-                    nextState = 'idle';
-                    logger.info(`[Booking] Denied live token for ${chatId}: clinic ${clinicId} is ${availability.reason}.`);
+                    const department = resolveDepartment(entities, clinicData);
+                    responseText = appointmentDatePrompt(availability.nextOpening);
+                    nextState = 'awaiting_appointment_date';
+                    await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName: entities?.doctor || null } });
+                    logger.info(`[Booking] Redirected closed-hours request for ${chatId} to future scheduling: clinic ${clinicId} is ${availability.reason}.`);
                 } else {
                     const department = resolveDepartment(entities, clinicData);
                     const booking = await queueService.bookToken({

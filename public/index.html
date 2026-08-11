@@ -19,6 +19,33 @@
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased min-h-screen flex flex-col selection:bg-blue-600 selection:text-white">
 
+  <!-- Staff sign-in gate -->
+  <div id="staff-login-overlay" class="fixed inset-0 z-[100] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+    <form id="staff-login-form" class="w-full max-w-md overflow-hidden bg-white rounded-3xl shadow-2xl ring-1 ring-white/15">
+      <div class="bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-7 text-white">
+        <div class="flex items-start justify-between gap-4">
+          <div class="bg-blue-500/20 ring-1 ring-blue-300/30 p-3 rounded-2xl text-blue-100"><i data-lucide="shield-check" class="w-7 h-7"></i></div>
+          <span class="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-black tracking-wide text-emerald-200"><span class="h-1.5 w-1.5 rounded-full bg-emerald-300"></span>SECURE STAFF ACCESS</span>
+        </div>
+        <h2 class="mt-6 font-black text-2xl tracking-tight">Welcome back.</h2>
+        <p class="mt-1 text-sm leading-relaxed text-slate-300">Sign in to the clinic’s live queue, patient handoff, and authorized operations workspace.</p>
+      </div>
+      <div class="space-y-4 p-7">
+        <div class="space-y-1.5">
+          <label for="staff-email" class="text-xs font-bold text-slate-700">Staff email</label>
+          <input id="staff-email" type="email" required autocomplete="username" placeholder="you@clinic.com" class="w-full border border-slate-200 rounded-xl px-3 py-3 text-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+        </div>
+        <div class="space-y-1.5">
+          <label for="staff-password" class="text-xs font-bold text-slate-700">Password</label>
+          <input id="staff-password" type="password" required autocomplete="current-password" placeholder="Enter your password" class="w-full border border-slate-200 rounded-xl px-3 py-3 text-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+        </div>
+        <p id="staff-login-error" role="alert" class="hidden rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"></p>
+        <button id="staff-login-submit" type="submit" class="w-full rounded-xl bg-blue-600 py-3 font-black text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500 active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-blue-200">SIGN IN TO DASHBOARD</button>
+        <p class="text-center text-[11px] leading-relaxed text-slate-400">Your permissions and clinic access are applied after sign-in.</p>
+      </div>
+    </form>
+  </div>
+
   <!-- Toast Notification Container -->
   <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-md w-full pointer-events-none"></div>
 
@@ -45,16 +72,15 @@
         </div>
       </div>
 
-      <!-- Action Tools -->
-      <div class="flex items-center gap-3">
-        <button id="btn-seed" onclick="seedSampleQueue()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition border border-slate-200 cursor-pointer">
-          <i data-lucide="sparkles" class="w-4 h-4 text-amber-500"></i>
-          <span>Seed Demo Queue</span>
-        </button>
-
-        <button onclick="fetchQueueState()" class="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition border border-slate-200 cursor-pointer" title="Refresh Queue State">
-          <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-        </button>
+      <!-- Staff identity and action tools -->
+      <div class="flex items-center gap-2 sm:gap-3">
+        <div id="staff-identity" class="hidden max-w-[210px] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+          <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><i data-lucide="user-round" class="w-3.5 h-3.5"></i></div>
+          <div class="min-w-0 leading-tight"><p id="staff-identity-name" class="truncate text-xs font-extrabold text-slate-800">Staff member</p><p id="staff-identity-role" class="truncate text-[10px] font-bold uppercase tracking-wide text-slate-500">Authorized staff</p></div>
+        </div>
+        <button id="btn-seed" data-allowed-roles="admin" onclick="seedSampleQueue()" class="hidden inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition border border-slate-200 cursor-pointer"><i data-lucide="sparkles" class="w-4 h-4 text-amber-500"></i><span>Seed Demo Queue</span></button>
+        <button onclick="fetchQueueState()" class="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition border border-slate-200 cursor-pointer" title="Refresh queue state" aria-label="Refresh queue state"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+        <button id="btn-sign-out" onclick="signOutStaff()" class="hidden p-2 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-600 transition border border-slate-200 cursor-pointer" title="Sign out" aria-label="Sign out"><i data-lucide="log-out" class="w-4 h-4"></i></button>
       </div>
 
     </div>
@@ -81,25 +107,9 @@
           <p id="clinic-specialty" class="text-xs font-medium text-slate-500">Dentistry, Orthodontics & General Practice</p>
         </div>
 
-        <!-- Clinic Switcher Pills -->
-        <div class="flex flex-wrap items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
-          <button onclick="switchClinic('clinic-metro-dental', 'Metro Dental & Medical Center')" class="clinic-btn active px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer bg-blue-600 text-white shadow-xs">
-            Metro Dental
-          </button>
-          <button onclick="switchClinic('clinic-city-health', 'City Health General Clinic')" class="clinic-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 cursor-pointer">
-            City Health
-          </button>
-          <button onclick="switchClinic('clinic-careplus', 'CarePlus Specialist Hospital')" class="clinic-btn px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 cursor-pointer">
-            CarePlus
-          </button>
-
-          <!-- Custom Tenant Input -->
-          <div class="flex items-center gap-1.5 pl-2 border-l border-slate-200">
-            <input id="input-custom-tenant" type="text" placeholder="Custom clinicId..." class="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-600 w-32" />
-            <button onclick="switchCustomTenant()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg cursor-pointer">
-              Set
-            </button>
-          </div>
+        <!-- Clinic access is populated only from the signed-in staff account. -->
+        <div id="clinic-switcher" class="flex max-w-full flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+          <span class="px-2 py-1 text-xs font-medium text-slate-400">Sign in to load authorized clinics.</span>
         </div>
 
       </div>
@@ -209,7 +219,7 @@
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         <!-- Action 1: Next Patient / Advance Queue -->
-        <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
+        <div data-allowed-roles="receptionist,manager,admin" class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
           <div>
             <div class="flex items-center gap-2 text-xs font-bold text-blue-400 uppercase tracking-wider">
               <i data-lucide="user-check" class="w-4 h-4"></i>
@@ -228,7 +238,7 @@
         </div>
 
         <!-- Action 2: Delay Trigger -->
-        <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
+        <div data-allowed-roles="receptionist,manager,admin" class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
           <div>
             <div class="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
               <i data-lucide="clock" class="w-4 h-4"></i>
@@ -260,7 +270,7 @@
         </div>
 
         <!-- Action 3: Emergency / VIP Token Prioritization -->
-        <div class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
+        <div data-allowed-roles="doctor,manager,admin" class="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 flex flex-col justify-between space-y-4">
           <div>
             <div class="flex items-center gap-2 text-xs font-bold text-rose-400 uppercase tracking-wider">
               <i data-lucide="alert-triangle" class="w-4 h-4"></i>
@@ -384,6 +394,121 @@
     let activeDepartment = 'Dentistry';
     let currentQueueData = null;
     let pollInterval = null;
+    let staffToken = sessionStorage.getItem('jarvis_staff_token');
+    let staffProfile = null;
+    let authorizedClinics = [];
+
+    function staffRoles() {
+      return (staffProfile?.roles || []).map(role => String(role).toLowerCase());
+    }
+
+    function roleLabel() {
+      const roles = staffRoles();
+      return roles.length ? roles.map(role => role.charAt(0).toUpperCase() + role.slice(1)).join(' · ') : 'Authorized staff';
+    }
+
+    function canUseElement(element) {
+      const allowed = String(element.dataset.allowedRoles || '').split(',').map(role => role.trim()).filter(Boolean);
+      return !allowed.length || allowed.some(role => staffRoles().includes(role));
+    }
+
+    function applyRoleAccess() {
+      document.querySelectorAll('[data-allowed-roles]').forEach((element) => {
+        const visible = canUseElement(element);
+        element.classList.toggle('hidden', !visible);
+        element.setAttribute('aria-hidden', String(!visible));
+      });
+
+      const identity = document.getElementById('staff-identity');
+      const signOut = document.getElementById('btn-sign-out');
+      if (staffProfile) {
+        document.getElementById('staff-identity-name').textContent = staffProfile.name || staffProfile.email || 'Staff member';
+        document.getElementById('staff-identity-role').textContent = roleLabel();
+        identity.classList.remove('hidden');
+        identity.classList.add('flex');
+        signOut.classList.remove('hidden');
+      } else {
+        identity.classList.add('hidden');
+        identity.classList.remove('flex');
+        signOut.classList.add('hidden');
+      }
+      lucide.createIcons();
+    }
+
+    function resetDashboardSession() {
+      sessionStorage.removeItem('jarvis_staff_token');
+      staffToken = null;
+      staffProfile = null;
+      authorizedClinics = [];
+      stopPolling();
+      applyRoleAccess();
+      document.getElementById('clinic-switcher').innerHTML = '<span class="px-2 py-1 text-xs font-medium text-slate-400">Sign in to load authorized clinics.</span>';
+      document.getElementById('staff-login-overlay').classList.remove('hidden');
+    }
+
+    function signOutStaff() {
+      resetDashboardSession();
+      document.getElementById('staff-password').value = '';
+      document.getElementById('staff-email').focus();
+      showToast('You have been signed out.', 'info');
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[character]));
+    }
+
+    function showLoginError(message) {
+      const node = document.getElementById('staff-login-error');
+      node.textContent = message;
+      node.classList.remove('hidden');
+    }
+
+    function apiFetch(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      if (staffToken) headers.set('Authorization', `Bearer ${staffToken}`);
+      return fetch(url, { ...options, headers }).then(async (response) => {
+        if (response.status === 401) resetDashboardSession();
+        return response;
+      });
+    }
+
+    async function signInStaff(event) {
+      event.preventDefault();
+      const email = document.getElementById('staff-email').value.trim();
+      const password = document.getElementById('staff-password').value;
+      const errorNode = document.getElementById('staff-login-error');
+      const submit = document.getElementById('staff-login-submit');
+      errorNode.classList.add('hidden');
+      submit.disabled = true;
+      submit.textContent = 'VERIFYING ACCESS…';
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to sign in.');
+        staffToken = data.token;
+        staffProfile = data.staff;
+        sessionStorage.setItem('jarvis_staff_token', staffToken);
+        applyRoleAccess();
+        await loadAuthorizedClinics();
+        document.getElementById('staff-login-overlay').classList.add('hidden');
+        startPolling();
+        showToast(`Signed in as ${staffProfile.name || staffProfile.email}.`, 'success');
+      } catch (err) {
+        resetDashboardSession();
+        showLoginError(err.message);
+      } finally {
+        submit.disabled = false;
+        submit.textContent = 'SIGN IN TO DASHBOARD';
+      }
+    }
+
+    document.getElementById('staff-login-form').addEventListener('submit', signInStaff);
 
     // Set Today's Date default
     document.getElementById('input-queue-date').value = new Date().toISOString().split('T')[0];
@@ -439,7 +564,7 @@
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/queue?department=${encodeURIComponent(activeDepartment)}&date=${encodeURIComponent(date)}`;
 
       try {
-        const response = await fetch(url);
+        const response = await apiFetch(url);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status} fetching queue`);
         }
@@ -462,7 +587,7 @@
     async function fetchHumanHandoff() {
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/human-handoff`;
       try {
-        const response = await fetch(url);
+        const response = await apiFetch(url);
         if (response.ok) {
           const data = await response.json();
           renderHumanHandoffList(data.patients || []);
@@ -476,8 +601,8 @@
 
     // Render Metrics
     function renderQueueMetrics(q) {
-      document.getElementById('metric-current-token').innerText = `#${q.currentToken || 100}`;
-      document.getElementById('metric-last-token').innerText = `#${q.lastIssuedToken || 100}`;
+      document.getElementById('metric-current-token').innerText = `#${q.currentToken ?? 0}`;
+      document.getElementById('metric-last-token').innerText = `#${q.lastIssuedToken ?? 0}`;
       
       const delay = q.delayMinutes || 0;
       document.getElementById('metric-delay-minutes').innerText = `+${delay}`;
@@ -497,10 +622,11 @@
       if (!patients || patients.length === 0) {
         container.innerHTML = `
           <div class="p-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-            <p class="text-xs font-bold text-slate-500">No patients in queue for ${activeDepartment}.</p>
-            <button onclick="seedSampleQueue()" class="mt-2 text-xs font-bold text-blue-600 hover:underline">Click here to seed demo queue</button>
+            <p class="text-xs font-bold text-slate-500">No patients in queue for ${escapeHtml(activeDepartment)}.</p>
+            <button data-allowed-roles="admin" onclick="seedSampleQueue()" class="mt-2 text-xs font-bold text-blue-600 hover:underline">Click here to seed demo queue</button>
           </div>
         `;
+        applyRoleAccess();
         return;
       }
 
@@ -527,27 +653,34 @@
           badgeText = 'Completed';
         }
 
+        const patientName = escapeHtml(p.patientName || 'Unnamed patient');
+        const reason = escapeHtml(p.reason || 'General Checkup');
+        const phone = escapeHtml(p.phone || 'N/A');
+        const aiNotes = p.aiNotes ? escapeHtml(p.aiNotes) : '';
+        const doctorName = escapeHtml(p.doctorName || 'General Practitioner');
+        const department = escapeHtml(p.department || activeDepartment);
+        const tokenNumber = Number(p.tokenNumber) || 0;
         return `
           <div class="border rounded-xl p-4 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${borderClass}">
             <div class="flex items-center gap-4">
               <div class="w-14 h-14 ${isCurrent ? 'bg-blue-600 text-white' : isPriority ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white'} rounded-xl flex flex-col items-center justify-center font-black shrink-0">
                 <span class="text-[8px] opacity-75">TKN</span>
-                <span class="text-xl leading-none">#${p.tokenNumber}</span>
+                <span class="text-xl leading-none">#${tokenNumber}</span>
               </div>
 
               <div>
                 <div class="flex items-center gap-2">
-                  <h4 class="font-extrabold text-base text-slate-900">${p.patientName}</h4>
+                  <h4 class="font-extrabold text-base text-slate-900">${patientName}</h4>
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded ${badgeBg}">${badgeText}</span>
                 </div>
-                <p class="text-xs text-slate-500 mt-0.5 font-medium">${p.reason || 'General Checkup'} &bull; Phone: ${p.phone || 'N/A'}</p>
-                ${p.aiNotes ? `<p class="text-[11px] text-slate-400 mt-1 font-mono">AI Note: ${p.aiNotes}</p>` : ''}
+                <p class="text-xs text-slate-500 mt-0.5 font-medium">${reason} &bull; Phone: ${phone}</p>
+                ${aiNotes ? `<p class="text-[11px] text-slate-400 mt-1 font-mono">AI Note: ${aiNotes}</p>` : ''}
               </div>
             </div>
 
             <div class="text-right shrink-0">
-              <span class="text-xs font-bold text-slate-600 block">${p.doctorName || 'General Practitioner'}</span>
-              <span class="text-[10px] text-slate-400 block">${p.department || activeDepartment}</span>
+              <span class="text-xs font-bold text-slate-600 block">${doctorName}</span>
+              <span class="text-[10px] text-slate-400 block">${department}</span>
             </div>
           </div>
         `;
@@ -569,26 +702,28 @@
         return;
       }
 
-      container.innerHTML = patients.map((p) => `
-        <div class="border border-purple-200 bg-purple-50/50 rounded-xl p-3.5 space-y-2">
-          <div class="flex items-center justify-between">
-            <h5 class="font-bold text-xs text-purple-950">${p.patientName} (TKN #${p.tokenNumber || 'N/A'})</h5>
-            <span class="text-[10px] font-mono font-bold bg-purple-200 text-purple-800 px-2 py-0.5 rounded">
-              ${p.phone || 'No Phone'}
-            </span>
+      container.innerHTML = patients.map((p) => {
+        const patientName = escapeHtml(p.patientName || 'Unnamed patient');
+        const phone = escapeHtml(p.phone || 'No Phone');
+        const query = escapeHtml(p.lastQuery || p.aiNotes || 'Complex query requiring receptionist intervention');
+        const tokenNumber = Number(p.tokenNumber) || 'N/A';
+        const patientIdArg = escapeHtml(JSON.stringify(String(p.id || '')));
+        const phoneArg = escapeHtml(JSON.stringify(String(p.phone || '')));
+        return `
+          <div class="border border-purple-200 bg-purple-50/50 rounded-xl p-3.5 space-y-2">
+            <div class="flex items-center justify-between">
+              <h5 class="font-bold text-xs text-purple-950">${patientName} (TKN #${tokenNumber})</h5>
+              <span class="text-[10px] font-mono font-bold bg-purple-200 text-purple-800 px-2 py-0.5 rounded">${phone}</span>
+            </div>
+            <p class="text-[11px] text-slate-700 bg-white p-2 rounded border border-purple-100 font-mono">"${query}"</p>
+            <button data-allowed-roles="receptionist,manager,admin" onclick="unmutePatient(${patientIdArg}, ${phoneArg})" class="w-full bg-purple-700 hover:bg-purple-800 text-white font-bold py-2 rounded-lg text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <i data-lucide="mic" class="w-3.5 h-3.5"></i><span>Resolve & Un-mute AI Bot</span>
+            </button>
           </div>
+        `;
+      }).join('');
 
-          <p class="text-[11px] text-slate-700 bg-white p-2 rounded border border-purple-100 font-mono">
-            "${p.lastQuery || p.aiNotes || 'Complex query requiring receptionist intervention'}"
-          </p>
-
-          <button onclick="unmutePatient('${p.id}', '${p.phone || ''}')" class="w-full bg-purple-700 hover:bg-purple-800 text-white font-bold py-2 rounded-lg text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
-            <i data-lucide="mic" class="w-3.5 h-3.5"></i>
-            <span>Resolve & Un-mute AI Bot</span>
-          </button>
-        </div>
-      `).join('');
-
+      applyRoleAccess();
       lucide.createIcons();
     }
 
@@ -602,7 +737,7 @@
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/advance`;
 
       try {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ department: activeDepartment, date })
@@ -630,7 +765,7 @@
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/delay`;
 
       try {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ department: activeDepartment, date, delayMinutes: minutes })
@@ -669,7 +804,7 @@
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/prioritize`;
 
       try {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ department: activeDepartment, date, tokenNumber: parseInt(tokenNumber, 10), reason: 'Emergency Priority' })
@@ -693,7 +828,7 @@
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/unmute`;
 
       try {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ patientId, phone })
@@ -717,7 +852,7 @@
       const url = `/api/clinic/${encodeURIComponent(activeClinicId)}/seed`;
 
       try {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ department: activeDepartment, date })
@@ -734,33 +869,52 @@
       }
     }
 
-    // Clinic Context Switcher
-    function switchClinic(id, name) {
-      activeClinicId = id;
-      activeClinicName = name;
-
-      document.getElementById('clinic-display-name').childNodes[0].nodeValue = `${name} `;
-      document.getElementById('clinic-id-tag').innerText = id;
-
-      document.querySelectorAll('.clinic-btn').forEach(btn => {
-        btn.classList.remove('bg-blue-600', 'text-white', 'shadow-xs');
-        btn.classList.add('bg-white', 'text-slate-600');
-        if (btn.innerText.trim().toLowerCase().includes(name.split(' ')[0].toLowerCase())) {
-          btn.classList.add('bg-blue-600', 'text-white', 'shadow-xs');
-          btn.classList.remove('bg-white', 'text-slate-600');
-        }
+    // Clinic selection is constrained to the access-controlled list returned by the backend.
+    function renderAuthorizedClinics() {
+      const container = document.getElementById('clinic-switcher');
+      container.replaceChildren();
+      if (!authorizedClinics.length) {
+        const note = document.createElement('span');
+        note.className = 'px-2 py-1 text-xs font-medium text-amber-700';
+        note.textContent = 'No clinics are assigned to this staff account.';
+        container.appendChild(note);
+        return;
+      }
+      authorizedClinics.forEach((clinic) => {
+        const button = document.createElement('button');
+        const selected = clinic.id === activeClinicId;
+        button.type = 'button';
+        button.className = `clinic-btn px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${selected ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900'}`;
+        button.textContent = clinic.name || clinic.id;
+        button.setAttribute('aria-pressed', String(selected));
+        button.addEventListener('click', () => switchClinic(clinic.id));
+        container.appendChild(button);
       });
-
-      fetchQueueState();
-      loadDepartments();
     }
 
-    function switchCustomTenant() {
-      const val = document.getElementById('input-custom-tenant').value.trim();
-      if (val) {
-        switchClinic(val, val.replace(/-/g, ' ').toUpperCase());
-        document.getElementById('input-custom-tenant').value = '';
+    async function loadAuthorizedClinics() {
+      const response = await apiFetch('/api/clinics');
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not load your clinic access.');
+      authorizedClinics = data.clinics || [];
+      if (!authorizedClinics.length) throw new Error('No clinic access is assigned to this staff account.');
+      const current = authorizedClinics.find((clinic) => clinic.id === activeClinicId) || authorizedClinics[0];
+      await switchClinic(current.id);
+    }
+
+    async function switchClinic(id) {
+      const clinic = authorizedClinics.find((candidate) => candidate.id === id);
+      if (!clinic) {
+        showToast('This clinic is not assigned to your staff account.', 'error');
+        return;
       }
+      activeClinicId = clinic.id;
+      activeClinicName = clinic.name || clinic.id;
+      document.getElementById('clinic-display-name').childNodes[0].nodeValue = `${activeClinicName} `;
+      document.getElementById('clinic-id-tag').innerText = activeClinicId;
+      document.getElementById('clinic-specialty').innerText = clinic.specialty || 'Clinic operations';
+      renderAuthorizedClinics();
+      await loadDepartments();
     }
 
     // Department Switcher
@@ -778,21 +932,31 @@
     }
 
     // Loads the clinic's REAL departments from the backend instead of
-    // guessing/hardcoding — this is what actually keeps the dashboard in
-    // sync with whatever department names the bot is really booking into.
+    // guessing/hardcoding — this keeps the dashboard synchronized with the bot.
+    function renderDepartments(departments) {
+      const container = document.getElementById('dept-btn-container');
+      container.replaceChildren();
+      departments.forEach((department) => {
+        const button = document.createElement('button');
+        const selected = department === activeDepartment;
+        button.type = 'button';
+        button.className = `dept-btn px-3 py-1 rounded-lg font-bold cursor-pointer ${selected ? 'active bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`;
+        button.textContent = department;
+        button.setAttribute('aria-pressed', String(selected));
+        button.addEventListener('click', () => setDepartment(department));
+        container.appendChild(button);
+      });
+    }
+
     async function loadDepartments() {
       const container = document.getElementById('dept-btn-container');
       container.innerHTML = '<span class="px-3 py-1 text-slate-400">Loading...</span>';
       try {
-        const res = await fetch(`/api/clinic/${encodeURIComponent(activeClinicId)}/departments`);
+        const res = await apiFetch(`/api/clinic/${encodeURIComponent(activeClinicId)}/departments`);
         const data = await res.json();
-        const departments = (data.departments && data.departments.length) ? data.departments : ['General Medicine'];
-
-        container.innerHTML = departments.map((dept, i) =>
-          `<button onclick="setDepartment('${dept.replace(/'/g, "\\'")}')" class="dept-btn ${i === 0 ? 'active bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'} px-3 py-1 rounded-lg font-bold cursor-pointer">${dept}</button>`
-        ).join('');
-
-        activeDepartment = departments[0];
+        const departments = Array.isArray(data.departments) && data.departments.length ? data.departments.map(String) : ['General Medicine'];
+        activeDepartment = departments.includes(activeDepartment) ? activeDepartment : departments[0];
+        renderDepartments(departments);
         fetchQueueState();
       } catch (err) {
         container.innerHTML = '<span class="px-3 py-1 text-red-500">Failed to load departments</span>';
@@ -819,9 +983,22 @@
       if (pollInterval) clearInterval(pollInterval);
     }
 
-    // Initial Load
-    loadDepartments();
-    startPolling();
+    // Initial Load: restore a valid staff session; otherwise keep the dashboard gated.
+    (async function bootstrapDashboard() {
+      if (!staffToken) { applyRoleAccess(); return; }
+      try {
+        const response = await apiFetch('/api/auth/me');
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error('Session validation failed.');
+        staffProfile = data.staff;
+        applyRoleAccess();
+        await loadAuthorizedClinics();
+        document.getElementById('staff-login-overlay').classList.add('hidden');
+        startPolling();
+      } catch (_err) {
+        resetDashboardSession();
+      }
+    })();
   </script>
 </body>
 </html>

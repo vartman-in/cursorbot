@@ -5,8 +5,11 @@ require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const path = require('path'); // <-- ADDED
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 const { logger } = require('./errorHandler');
+const { db } = require('./db');
+const { version } = require('./package.json');
 
 // Import Controllers
 const { onboardNewClinic, resolveInstance, linkClinicInstance } = require('./controllers/adminController');
@@ -20,9 +23,17 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 // Middleware
+// Add an opaque correlation ID before logging or routing so operational events
+// and audit records can be traced without placing sensitive details in logs.
+app.use((req, res, next) => {
+    req.requestId = uuidv4();
+    res.setHeader('X-Request-Id', req.requestId);
+    next();
+});
+morgan.token('request-id', (req) => req.requestId || '-');
 // Disable strict CSP temporarily so Tailwind CDN and inline scripts work in our HTML
-app.use(helmet({ contentSecurityPolicy: false })); 
-app.use(morgan('combined'));
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(morgan(':remote-addr :method :url :status :res[content-length] - :response-time ms request_id=:request-id'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -61,19 +72,36 @@ app.use('/api/webhooks/greenapi', webhookRoutes);
 // Mount Dashboard APIs
 app.use('/api', adminDashboardRoutes); // <-- ADDED
 
-// Health check
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
+// Health check: safe for Render probes and operational monitoring. A request
+// read verifies that Firestore is reachable, not merely that credentials exist.
+app.get('/health', async (req, res) => {
+    let firestore = { configured: Boolean(db), status: db ? 'checking' : 'unavailable' };
+    if (db) {
+        try {
+            await db.collection('clinics').limit(1).get();
+            firestore = { configured: true, status: 'connected' };
+        } catch (error) {
+            firestore = { configured: true, status: 'degraded' };
+            logger.warn(`[Health] Firestore connectivity check failed: ${error.message}`);
+        }
+    }
+
+    const healthy = firestore.status === 'connected';
+    res.status(healthy ? 200 : 503).json({
+        status: healthy ? 'ok' : 'degraded',
         service: 'clinic-ai-receptionist',
-        uptime: process.uptime()
+        version,
+        uptimeSeconds: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString(),
+        requestId: req.requestId,
+        dependencies: { firestore },
     });
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(`Unhandled Error: ${err.message}`, { stack: err.stack });
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error(`Unhandled Error [${req.requestId || 'unknown'}]: ${err.message}`, { stack: err.stack });
+    res.status(500).json({ error: 'Internal Server Error', requestId: req.requestId });
 });
 
 // Initialize Cron Jobs
