@@ -212,6 +212,111 @@ async function bookFutureAppointment({ clinicId, clinicData, patientId, patientN
     return appointment;
 }
 
+async function getFutureAppointmentForPatient({ appointmentId, patientId, clinicId }) {
+    if (!db) throw new Error('Appointment database is unavailable.');
+    if (!appointmentId || !patientId || !clinicId) throw new Error('Appointment ID, patient, and clinic are required.');
+
+    const snapshot = await db.collection('appointments').doc(String(appointmentId)).get();
+    if (!snapshot.exists) return null;
+    const appointment = { id: snapshot.id, ...snapshot.data() };
+    if (appointment.patientId !== patientId || appointment.clinicId !== clinicId) return null;
+    if (!ACTIVE_STATUSES.includes(appointment.status)) return null;
+
+    const appointmentDateTime = appointment.dateTime?.toDate ? appointment.dateTime.toDate() : new Date(appointment.dateTime);
+    if (Number.isNaN(appointmentDateTime.getTime()) || appointmentDateTime.getTime() <= Date.now()) return null;
+    return appointment;
+}
+
+async function rescheduleFutureAppointment({ appointmentId, patientId, clinicId, clinicData, date, time, reason = '' }) {
+    if (!db) throw new Error('Appointment database is unavailable.');
+    if (!appointmentId || !patientId || !clinicId || !date || !time) {
+        throw new Error('Appointment ID, patient, clinic, date, and time are required.');
+    }
+
+    const appointmentRef = db.collection('appointments').doc(String(appointmentId));
+    const targetDateTime = buildIstDateTime(date, time);
+    if (targetDateTime.getTime() <= Date.now()) throw new Error('Please choose a future appointment time.');
+
+    return db.runTransaction(async (transaction) => {
+        const appointmentSnapshot = await transaction.get(appointmentRef);
+        if (!appointmentSnapshot.exists) throw new Error('Appointment was not found.');
+        const appointment = { id: appointmentSnapshot.id, ...appointmentSnapshot.data() };
+        if (appointment.patientId !== patientId || appointment.clinicId !== clinicId) {
+            throw new Error('This appointment is not associated with your WhatsApp number.');
+        }
+        if (!ACTIVE_STATUSES.includes(appointment.status)) throw new Error('This appointment can no longer be rescheduled.');
+
+        const originalDateTime = appointment.dateTime?.toDate ? appointment.dateTime.toDate() : new Date(appointment.dateTime);
+        if (Number.isNaN(originalDateTime.getTime()) || originalDateTime.getTime() <= Date.now()) {
+            throw new Error('Only future appointments can be rescheduled.');
+        }
+
+        const department = appointment.department;
+        const doctorName = appointment.doctorName || null;
+        const validSlots = getSlotsForDate({ clinicData, department, doctorName, date });
+        if (!validSlots.includes(time)) throw new Error('That replacement time is outside clinic appointment hours.');
+        if (isHoliday(clinicData, date)) throw new Error('The clinic is closed on the selected date.');
+        if (appointment.date === date && appointment.time === time) throw new Error('Your appointment is already scheduled for that time.');
+
+        const { capacity } = getSlotConfiguration(clinicData, department, doctorName);
+        const originalSlotRef = db.collection('appointmentSlots').doc(slotKey({
+            clinicId, department, doctorName, date: appointment.date, time: appointment.time,
+        }));
+        const replacementSlotRef = db.collection('appointmentSlots').doc(slotKey({
+            clinicId, department, doctorName, date, time,
+        }));
+        const [originalSlotSnapshot, replacementSlotSnapshot] = await Promise.all([
+            transaction.get(originalSlotRef),
+            transaction.get(replacementSlotRef),
+        ]);
+        const replacementSlot = replacementSlotSnapshot.exists ? replacementSlotSnapshot.data() : null;
+        const replacementBookedCount = Number(replacementSlot?.bookedCount || 0);
+        if (replacementSlot && ACTIVE_STATUSES.includes(replacementSlot.status) && replacementBookedCount >= capacity) {
+            throw new Error('This replacement slot was just booked. Please choose another time.');
+        }
+
+        const originalBookedCount = Math.max(0, Number(originalSlotSnapshot.data()?.bookedCount || 1) - 1);
+        transaction.set(originalSlotRef, {
+            bookedCount: originalBookedCount,
+            status: originalBookedCount ? 'booked' : 'available',
+            updatedAt: new Date(),
+        }, { merge: true });
+        transaction.set(replacementSlotRef, {
+            clinicId,
+            department,
+            doctorName,
+            date,
+            time,
+            capacity,
+            bookedCount: replacementBookedCount + 1,
+            status: 'booked',
+            updatedAt: new Date(),
+        }, { merge: true });
+        transaction.update(appointmentRef, {
+            date,
+            time,
+            dateTime: targetDateTime,
+            status: 'booked',
+            rescheduleCount: Number(appointment.rescheduleCount || 0) + 1,
+            lastReschedule: {
+                fromDate: appointment.date,
+                fromTime: appointment.time,
+                reason: String(reason || '').slice(0, 300),
+                changedAt: new Date(),
+            },
+            updatedAt: new Date(),
+        });
+
+        return {
+            ...appointment,
+            date,
+            time,
+            dateTime: targetDateTime,
+            rescheduleCount: Number(appointment.rescheduleCount || 0) + 1,
+        };
+    });
+}
+
 async function cancelFutureAppointment({ appointmentId, patientId, reason = '' }) {
     if (!db) throw new Error('Appointment database is unavailable.');
     if (!appointmentId || !patientId) throw new Error('Appointment ID and patient ID are required.');
@@ -258,6 +363,8 @@ module.exports = {
     getAvailableSlots,
     getNextAvailableDates,
     bookFutureAppointment,
+    getFutureAppointmentForPatient,
+    rescheduleFutureAppointment,
     cancelFutureAppointment,
     sendReminders,
 };

@@ -48,6 +48,8 @@ async function run() {
         [appointments.getSlotsForDate, 'appointmentService.getSlotsForDate'],
         [appointments.getNextAvailableDates, 'appointmentService.getNextAvailableDates'],
         [appointments.bookFutureAppointment, 'appointmentService.bookFutureAppointment'],
+        [appointments.getFutureAppointmentForPatient, 'appointmentService.getFutureAppointmentForPatient'],
+        [appointments.rescheduleFutureAppointment, 'appointmentService.rescheduleFutureAppointment'],
         [triage.triageMessage, 'triageService.triageMessage'],
         [staffAuth.authenticateCredentials, 'staffAuthService.authenticateCredentials'],
         [staffAuth.issueStaffToken, 'staffAuthService.issueStaffToken'],
@@ -120,7 +122,15 @@ async function run() {
     verify(!webhookTest.isExplicitAppointmentCancellation('Emergency nahi hai, lekin appointment chahiye.'), 'ordinary Hinglish negation does not cancel scheduling');
     verify(webhookTest.isExplicitAppointmentCancellation('booking cancel karo'), 'explicit booking cancellation clears scheduling');
 
-    console.log('\n── 7. Future scheduling safeguards ──');
+    console.log('\n── 7. Future-appointment rescheduling safeguards ──');
+    const rescheduleRequest = 'Mera appointment ID DlVf3V1TGquEHDFatEiF hai. Mujhe 13 August 2026, 10:00 AM wala appointment 11:00 AM par reschedule karna hai.';
+    same(webhookTest.extractAppointmentId(rescheduleRequest), 'DlVf3V1TGquEHDFatEiF', 'appointment ID is extracted from a patient reschedule request');
+    verify(webhookTest.isFutureAppointmentChangeRequest(rescheduleRequest), 'reschedule wording routes deterministically to future-appointment modification');
+    same(webhookTest.parseAppointmentDate(rescheduleRequest), '2026-08-13', 'reschedule request retains its requested replacement date');
+    same(webhookTest.parseLatestAppointmentTime(rescheduleRequest, ['09:00', '10:00', '11:00']), '11:00', 'combined date-time reschedule request selects the final requested time');
+    verify(!webhookTest.isExplicitAppointmentCancellation('Mujhe appointment reschedule nahi karna hai.'), 'reschedule negation does not silently cancel the existing appointment');
+
+    console.log('\n── 8. Future scheduling safeguards ──');
     const schedulingClinic = { operatingHours: {
         Monday: { open: '09:00', close: '10:00' }, Tuesday: { open: '09:00', close: '10:00' },
         Wednesday: { open: '09:00', close: '10:00' }, Thursday: { open: '09:00', close: '10:00' },
@@ -132,8 +142,10 @@ async function run() {
     mustThrow(() => appointments.getSlotsForDate({ clinicData: schedulingClinic, department: 'General Medicine', date: 'invalid' }), /valid appointment date/, 'invalid appointment date is rejected');
     same(appointments.displaySlot('14:05'), '2:05 PM', 'slot displays in patient-friendly time');
     await mustReject(() => appointments.bookFutureAppointment({ clinicId: 'clinic-01', patientId: 'patient-01', department: 'General Medicine', date: '2020-01-01', time: '09:00' }), /Appointment database is unavailable/, 'booking safely fails while database is unavailable');
+    await mustReject(() => appointments.getFutureAppointmentForPatient({ appointmentId: 'DlVf3V1TGquEHDFatEiF', patientId: 'patient-01', clinicId: 'clinic-01' }), /Appointment database is unavailable/, 'future appointment lookup fails closed while database is unavailable');
+    await mustReject(() => appointments.rescheduleFutureAppointment({ appointmentId: 'DlVf3V1TGquEHDFatEiF', patientId: 'patient-01', clinicId: 'clinic-01', clinicData: schedulingClinic, date: '2026-01-05', time: '09:00' }), /Appointment database is unavailable/, 'rescheduling safely fails closed while database is unavailable');
 
-    console.log('\n── 8. Staff authentication and tenant scoping ──');
+    console.log('\n── 9. Staff authentication and tenant scoping ──');
     const previousJwt = process.env.JWT_SECRET;
     const previousUsers = process.env.STAFF_USERS_JSON;
     process.env.JWT_SECRET = 'unit-test-signing-secret';
@@ -153,7 +165,7 @@ async function run() {
     if (previousJwt === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = previousJwt;
     if (previousUsers === undefined) delete process.env.STAFF_USERS_JSON; else process.env.STAFF_USERS_JSON = previousUsers;
 
-    console.log('\n── 9. Privacy-safe staff alerts ──');
+    console.log('\n── 10. Privacy-safe staff alerts ──');
     const privacySafeAlert = alerts.buildStaffAlertPayload({
         alertType: 'Urgent symptom review requested', clinicName: 'Test Clinic', patientReference: 'PATIENT-4321',
         patientName: 'Ankit', cleanPhone: '918426862111', lastUserMessage: 'I have a private concern.', tokenStr: '12', includePatientPii: false,
@@ -166,7 +178,7 @@ async function run() {
     });
     verify(restrictedPiiAlert.whatsappAlert.includes('Ankit') && restrictedPiiAlert.whatsappAlert.includes('918426862111'), 'explicitly restricted alert mode includes patient details when enabled');
 
-    console.log('\n── 10. Audit record correlation ──');
+    console.log('\n── 11. Audit record correlation ──');
     const auditEvent = await audit.logStaffAction({ clinicId: 'clinic-01', actor: { email: 'frontdesk@test.example', role: 'receptionist' }, action: 'queue.advance', target: { queueDate: date, department: 'General Medicine' }, requestId: 'req-smoke-test-001' });
     same(auditEvent.clinicId, 'clinic-01', 'audit event retains clinic ID');
     same(auditEvent.action, 'queue.advance', 'audit event retains mutation action');

@@ -19,6 +19,8 @@ const {
     getAvailableSlots,
     getNextAvailableDates,
     bookFutureAppointment,
+    getFutureAppointmentForPatient,
+    rescheduleFutureAppointment,
     displaySlot,
 } = require('../services/appointmentService');
 const { getLiveTokenAvailability, buildClosedHoursReply } = require('../services/clinicHoursService');
@@ -161,6 +163,15 @@ function parseAppointmentTime(message, availableSlots = []) {
     return listed || formatted[0] || null;
 }
 
+function parseLatestAppointmentTime(message, availableSlots = []) {
+    const candidates = [...String(message || '').matchAll(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|baje)\b/gi)];
+    for (const candidate of candidates.reverse()) {
+        const parsed = parseAppointmentTime(candidate[0], availableSlots);
+        if (parsed) return parsed;
+    }
+    return parseAppointmentTime(message, availableSlots);
+}
+
 function formatIsoDateForPatient(isoDate) {
     if (!isoDate) return null;
     const [year, month, day] = isoDate.split('-').map(Number);
@@ -219,6 +230,18 @@ function confirmsPendingAppointmentOffer(message, offer) {
 
 function wantsEarliestAvailableAppointment(message) {
     return /\b(next available|earliest|first available|next slot|jaldi|soon|kab|when|pehla|pehli)\b/i.test(String(message || ''));
+}
+
+function extractAppointmentId(message) {
+    const input = String(message || '');
+    const labelled = input.match(/\bappointment\s*(?:id|number|no\.?|reference)?\s*[:#-]?\s*([A-Za-z0-9_-]{10,})\b/i);
+    if (labelled) return labelled[1];
+    const standalone = input.match(/\b([A-Za-z0-9_-]{16,})\b/);
+    return standalone ? standalone[1] : null;
+}
+
+function isFutureAppointmentChangeRequest(message) {
+    return /\b(reschedule|modify|change|move|shift|reschedule karna|time change|date change)\b/i.test(String(message || ''));
 }
 
 async function findNextAvailableAppointmentOffer({ clinicId, clinicData, department, doctorName = null, fromDate }) {
@@ -556,8 +579,11 @@ router.post('/', async (req, res) => {
         // appointment workflow even if a probabilistic classifier labels the
         // symptom text as a generic handoff. Deterministic emergency screening
         // below still has absolute priority.
+        const requestedAppointmentId = extractAppointmentId(patientMessage);
         let intent = looksLikeStatusQuery(patientMessage) ? 'check_status' : classifiedIntent;
-        if (wantsClinicalAppointment(patientMessage) && ['human_handoff', 'medical_advice', 'symptom_inquiry', 'general_inquiry'].includes(intent)) {
+        if (requestedAppointmentId && isFutureAppointmentChangeRequest(patientMessage)) {
+            intent = 'modify_appointment';
+        } else if (wantsClinicalAppointment(patientMessage) && ['human_handoff', 'medical_advice', 'symptom_inquiry', 'general_inquiry'].includes(intent)) {
             intent = 'book_appointment';
         }
         logger.info(`[Webhook] Classified intent: ${intent} for ${chatId}`);
@@ -771,6 +797,59 @@ router.post('/', async (req, res) => {
             }
         }
         
+        // Patient has already verified a future appointment and is choosing a
+        // replacement time. This state is kept separate from new bookings so a
+        // replacement never creates a duplicate visit.
+        else if (patient.currentFlowState === 'awaiting_reschedule_time') {
+            if (isExplicitAppointmentCancellation(patientMessage)) {
+                responseText = 'Rescheduling request cancelled. Aapka existing appointment abhi bhi unchanged hai.';
+                nextState = 'idle';
+                await patients.createOrUpdate(chatId, { bookingDetails: null });
+            } else {
+                const details = patient.bookingDetails || {};
+                const requestedDate = parseAppointmentDate(patientMessage) || details.date;
+                if (!details.rescheduleAppointmentId || !details.department || !requestedDate) {
+                    responseText = 'Reschedule details expire ho gaye hain. Kripya appointment ID ke saath dobara reschedule request bhejein.';
+                    nextState = 'idle';
+                    await patients.createOrUpdate(chatId, { bookingDetails: null });
+                } else {
+                    const availableSlots = await getAvailableSlots({
+                        clinicId,
+                        clinicData,
+                        department: details.department,
+                        doctorName: details.doctorName || null,
+                        date: requestedDate,
+                    });
+                    const selectedTime = parseLatestAppointmentTime(patientMessage, availableSlots);
+                    if (!selectedTime) {
+                        responseText = availableSlots.length
+                            ? `Available replacement times for ${formatIsoDateForPatient(requestedDate)} are: ${availableSlots.map(displaySlot).join(', ')}. Kripya exact time bhejein.`
+                            : `Is date par replacement slot available nahi hai. Kripya another date bhejein.`;
+                        nextState = 'awaiting_reschedule_time';
+                    } else {
+                        try {
+                            const appointment = await rescheduleFutureAppointment({
+                                appointmentId: details.rescheduleAppointmentId,
+                                patientId: chatId,
+                                clinicId,
+                                clinicData,
+                                date: requestedDate,
+                                time: selectedTime,
+                                reason: patientMessage,
+                            });
+                            responseText = `✅ Appointment rescheduled for ${appointment.department} on ${formatIsoDateForPatient(appointment.date)} at ${displaySlot(appointment.time)}. Appointment ID: ${appointment.id}. Kripya 10 minutes pehle pahunchiye.`;
+                            nextState = 'idle';
+                            await patients.createOrUpdate(chatId, { bookingDetails: null, latestAppointmentId: appointment.id });
+                        } catch (error) {
+                            logger.warn(`[Appointment] Could not reschedule ${details.rescheduleAppointmentId} for ${chatId}: ${error.message}`);
+                            responseText = `Reschedule complete nahi ho saka: ${error.message} Kripya another available time choose karein.`;
+                            nextState = 'awaiting_reschedule_time';
+                        }
+                    }
+                }
+            }
+        }
+
         // Real-Time Status Query
         else if (intent === 'check_status') {
             if (!liveStatus) {
@@ -803,18 +882,85 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Patient wants to change their visit — honest about what this system
-        // can actually do (same-day sequential tokens, not date/time slots),
-        // rather than pretending to reschedule to a specific new slot.
+        // Future appointments use a separate, verified rescheduling workflow.
+        // A known appointment ID alone is never sufficient: it must belong to
+        // this WhatsApp patient and this resolved clinic before slots are shown.
         else if (intent === 'modify_appointment') {
-            if (!liveStatus) {
-                responseText = "You don't currently have an active token to modify. Would you like to book one?";
+            const appointmentId = requestedAppointmentId || patient.latestAppointmentId || null;
+            if (appointmentId) {
+                try {
+                    const appointment = await getFutureAppointmentForPatient({ appointmentId, patientId: chatId, clinicId });
+                    if (!appointment) {
+                        responseText = 'Mujhe is appointment ID ke saath aapka active future appointment nahi mila. Kripya same WhatsApp number se valid appointment ID bhejein, ya clinic reception se sampark karein.';
+                        nextState = 'idle';
+                    } else {
+                        const requestedDate = parseAppointmentDate(patientMessage) || appointment.date;
+                        const availableSlots = await getAvailableSlots({
+                            clinicId,
+                            clinicData,
+                            department: appointment.department,
+                            doctorName: appointment.doctorName || null,
+                            date: requestedDate,
+                        });
+                        const requestedTime = parseLatestAppointmentTime(patientMessage, availableSlots);
+                        if (requestedTime) {
+                            try {
+                                const rescheduled = await rescheduleFutureAppointment({
+                                    appointmentId: appointment.id,
+                                    patientId: chatId,
+                                    clinicId,
+                                    clinicData,
+                                    date: requestedDate,
+                                    time: requestedTime,
+                                    reason: patientMessage,
+                                });
+                                responseText = `✅ Appointment rescheduled for ${rescheduled.department} on ${formatIsoDateForPatient(rescheduled.date)} at ${displaySlot(rescheduled.time)}. Appointment ID: ${rescheduled.id}. Kripya 10 minutes pehle pahunchiye.`;
+                                nextState = 'idle';
+                                await patients.createOrUpdate(chatId, { bookingDetails: null, latestAppointmentId: rescheduled.id });
+                            } catch (error) {
+                                logger.warn(`[Appointment] Direct reschedule failed for ${appointment.id}: ${error.message}`);
+                                responseText = `Yeh replacement time reserve nahi ho saka: ${error.message} Available times hain: ${availableSlots.map(displaySlot).join(', ')}. Kripya another time choose karein.`;
+                                nextState = 'awaiting_reschedule_time';
+                                await patients.createOrUpdate(chatId, {
+                                    bookingDetails: {
+                                        rescheduleAppointmentId: appointment.id,
+                                        department: appointment.department,
+                                        doctorName: appointment.doctorName || null,
+                                        date: requestedDate,
+                                        availableSlots,
+                                    },
+                                });
+                            }
+                        } else {
+                            responseText = availableSlots.length
+                                ? `Aapka ${appointment.department} appointment ${formatIsoDateForPatient(appointment.date)} at ${displaySlot(appointment.time)} hai. Available replacement times for ${formatIsoDateForPatient(requestedDate)} are: ${availableSlots.map(displaySlot).join(', ')}. Kripya exact new time bhejein.`
+                                : `Is date par replacement slot available nahi hai. Kripya another future date bhejein.`;
+                            nextState = 'awaiting_reschedule_time';
+                            await patients.createOrUpdate(chatId, {
+                                bookingDetails: {
+                                    rescheduleAppointmentId: appointment.id,
+                                    department: appointment.department,
+                                    doctorName: appointment.doctorName || null,
+                                    date: requestedDate,
+                                    availableSlots,
+                                },
+                            });
+                        }
+                    }
+                } catch (error) {
+                    logger.error(`[Appointment] Could not verify reschedule request for ${chatId}: ${error.message}`);
+                    responseText = 'Appointment reschedule temporarily verify nahi ho saka. Kripya thodi der baad try karein ya clinic reception se sampark karein.';
+                    nextState = 'idle';
+                }
+            } else if (!liveStatus) {
+                responseText = 'Future appointment reschedule karne ke liye appointment ID bhejein. Agar aapke paas aaj ka live token hai, “status” likhkar check kar sakte hain.';
+                nextState = 'idle';
             } else {
                 responseText = `You currently have Token #${liveStatus.tokenNumber} for ${liveStatus.department} today — ` +
                     `this system issues live same-day tokens rather than fixed time slots, so I can't move you to a specific new time. ` +
                     `If you'd like, just say "cancel" and I'll cancel this token so you can book a fresh one whenever suits you.`;
+                nextState = 'idle';
             }
-            nextState = 'idle';
         }
         
         // Live Digital Token Engine
@@ -952,6 +1098,9 @@ module.exports = router;
 module.exports._test = {
     parseAppointmentDate,
     parseAppointmentTime,
+    parseLatestAppointmentTime,
+    extractAppointmentId,
+    isFutureAppointmentChangeRequest,
     appointmentDatePrompt,
     formatIsoDateForPatient,
     wantsClinicalAppointment,
