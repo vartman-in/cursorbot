@@ -16,6 +16,7 @@ const { PatientService } = require('../services/patientService');
 const {
     DEPARTMENTS,
     getSlotsForDate,
+    getAvailableSlots,
     getNextAvailableDates,
     bookFutureAppointment,
     displaySlot,
@@ -180,6 +181,55 @@ function wantsClinicalAppointment(message) {
 
 function isAffirmative(message) {
     return /^\s*(yes|y|haan|ha|han|ji|theek hai|thik hai|book|book karo|kar do)\s*[.!]?\s*$/i.test(String(message || ''));
+}
+
+// Only clear a scheduling flow for an unambiguous cancellation command. Hindi
+// negations such as “emergency nahi hai” are common medical context and must
+// never silently cancel a pending appointment.
+function isExplicitAppointmentCancellation(message) {
+    const input = String(message || '').trim().toLowerCase().replace(/[.!]/g, '');
+    return /^(cancel|cancel appointment|cancel booking|booking cancel(?: karo)?|appointment cancel(?: karo)?|mujhe cancel karna hai|nahi chahiye)$/.test(input);
+}
+
+const PENDING_APPOINTMENT_OFFER_TTL_MS = 10 * 60 * 1000;
+
+function buildPendingAppointmentOffer({ clinicId, department, date, time, doctorName = null, now = new Date() }) {
+    const offeredAt = new Date(now);
+    return {
+        clinicId: String(clinicId),
+        department,
+        date,
+        time,
+        doctorName: doctorName || null,
+        offeredAt: offeredAt.toISOString(),
+        expiresAt: new Date(offeredAt.getTime() + PENDING_APPOINTMENT_OFFER_TTL_MS).toISOString(),
+    };
+}
+
+function isPendingAppointmentOfferValid(offer, now = new Date()) {
+    if (!offer?.clinicId || !offer?.department || !offer?.date || !offer?.time || !offer?.expiresAt) return false;
+    return new Date(offer.expiresAt).getTime() > new Date(now).getTime();
+}
+
+function confirmsPendingAppointmentOffer(message, offer) {
+    if (!isPendingAppointmentOfferValid(offer)) return false;
+    if (isAffirmative(message)) return true;
+    return parseAppointmentTime(message, [offer.time]) === offer.time;
+}
+
+function wantsEarliestAvailableAppointment(message) {
+    return /\b(next available|earliest|first available|next slot|jaldi|soon|kab|when|pehla|pehli)\b/i.test(String(message || ''));
+}
+
+async function findNextAvailableAppointmentOffer({ clinicId, clinicData, department, doctorName = null, fromDate }) {
+    const dates = await getNextAvailableDates({ clinicData, fromDate, days: 14 });
+    for (const date of dates) {
+        const slots = await getAvailableSlots({ clinicId, clinicData, department, doctorName, date });
+        if (slots.length) {
+            return buildPendingAppointmentOffer({ clinicId, department, doctorName, date, time: slots[0] });
+        }
+    }
+    return null;
 }
 
 // 🕒 Real-Time Clinic Schedule Guard — prevents the bot from handing out a
@@ -579,17 +629,86 @@ router.post('/', async (req, res) => {
             await alertStaff(chatId, patientName, 'Urgent symptom review requested', transcript, clinicData?.clinicId || instanceId);
         }
 
+        // A quick future-slot offer is a durable conversation state, not merely
+        // text in the transcript. It is clinic-scoped, expires after ten minutes,
+        // and is revalidated atomically before any confirmation is sent.
+        const pendingOffer = patient.pendingAppointmentOffer;
+        const pendingOfferMatchesClinic = pendingOffer?.clinicId === String(clinicId || '');
+        const hasValidPendingOffer = pendingOfferMatchesClinic && isPendingAppointmentOfferValid(pendingOffer);
+        const hasExpiredPendingOffer = Boolean(pendingOffer) && !hasValidPendingOffer;
+
         // Future appointment state: date selection. This is intentionally
         // deterministic and runs before token logic, so a closed clinic never
         // turns a future visit request into a same-day queue token.
         if (isExplicitHumanHandoff) {
             // The handoff response and state were already set above. Do not
             // send it through ordinary status, booking, or LLM handling.
+        } else if (hasExpiredPendingOffer) {
+            responseText = 'Aapka proposed appointment slot expire ho gaya hai. Kripya preferred date bhejein, main latest available slots dikha deta hu.';
+            nextState = 'awaiting_appointment_date';
+            await patients.createOrUpdate(chatId, { pendingAppointmentOffer: null, bookingDetails: null });
+        } else if (hasValidPendingOffer) {
+            if (isExplicitAppointmentCancellation(patientMessage)) {
+                responseText = 'Proposed appointment slot cancel kar diya gaya hai. Jab aap ready hon, preferred date bhej dijiye.';
+                nextState = 'idle';
+                await patients.createOrUpdate(chatId, { pendingAppointmentOffer: null, bookingDetails: null });
+            } else if (confirmsPendingAppointmentOffer(patientMessage, pendingOffer)) {
+                try {
+                    const appointment = await bookFutureAppointment({
+                        clinicId,
+                        clinicData,
+                        patientId: chatId,
+                        patientName,
+                        phone: senderPhone,
+                        department: pendingOffer.department,
+                        date: pendingOffer.date,
+                        time: pendingOffer.time,
+                        doctorName: pendingOffer.doctorName,
+                        reason: patientMessage,
+                    });
+                    responseText = `✅ Appointment confirmed for ${appointment.department} on ${formatIsoDateForPatient(appointment.date)} at ${displaySlot(appointment.time)}. Appointment ID: ${appointment.id}. Kripya 10 minutes pehle pahunchiye.`;
+                    nextState = 'idle';
+                    await patients.createOrUpdate(chatId, {
+                        pendingAppointmentOffer: null,
+                        bookingDetails: null,
+                        latestAppointmentId: appointment.id,
+                    });
+                } catch (error) {
+                    logger.warn(`[Appointment] Pending slot confirmation failed for ${chatId}: ${error.message}`);
+                    const replacementSlots = await getAvailableSlots({
+                        clinicId,
+                        clinicData,
+                        department: pendingOffer.department,
+                        doctorName: pendingOffer.doctorName,
+                        date: pendingOffer.date,
+                    });
+                    if (replacementSlots.length) {
+                        responseText = `Yeh slot ab available nahi raha. ${formatIsoDateForPatient(pendingOffer.date)} ke available times: ${replacementSlots.slice(0, 8).map(displaySlot).join(', ')}. Kripya exact time bhejein.`;
+                        nextState = 'awaiting_appointment_time';
+                        await patients.createOrUpdate(chatId, {
+                            pendingAppointmentOffer: null,
+                            bookingDetails: {
+                                department: pendingOffer.department,
+                                date: pendingOffer.date,
+                                availableSlots: replacementSlots,
+                                doctorName: pendingOffer.doctorName || null,
+                            },
+                        });
+                    } else {
+                        responseText = 'Yeh slot ab available nahi raha. Kripya preferred date bhejein, main latest available slots dikha deta hu.';
+                        nextState = 'awaiting_appointment_date';
+                        await patients.createOrUpdate(chatId, { pendingAppointmentOffer: null, bookingDetails: null });
+                    }
+                }
+            } else {
+                responseText = `Maine ${pendingOffer.department} ke liye ${formatIsoDateForPatient(pendingOffer.date)} ko ${displaySlot(pendingOffer.time)} ka slot ${new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(pendingOffer.expiresAt))} tak hold kiya hai. Confirm karne ke liye “haan” ya “${displaySlot(pendingOffer.time)} book karo” likhein.`;
+                nextState = 'awaiting_appointment_confirmation';
+            }
         } else if (patient.currentFlowState === 'awaiting_appointment_date') {
-            if (/\b(cancel|stop|nahi)\b/i.test(patientMessage)) {
+            if (isExplicitAppointmentCancellation(patientMessage)) {
                 responseText = 'Appointment booking cancelled. Jab aap ready hon, kripya date ke saath dobara message karein.';
                 nextState = 'idle';
-                await patients.createOrUpdate(chatId, { bookingDetails: null });
+                await patients.createOrUpdate(chatId, { bookingDetails: null, pendingAppointmentOffer: null });
             } else {
                 const date = parseAppointmentDate(patientMessage);
                 if (!date) {
@@ -616,10 +735,10 @@ router.post('/', async (req, res) => {
         // Future appointment state: a final selected slot is atomically
         // reserved in Firestore so two patients cannot take it simultaneously.
         else if (patient.currentFlowState === 'awaiting_appointment_time') {
-            if (/\b(cancel|stop|nahi)\b/i.test(patientMessage)) {
+            if (isExplicitAppointmentCancellation(patientMessage)) {
                 responseText = 'Appointment booking cancelled. Jab aap ready hon, kripya dobara message karein.';
                 nextState = 'idle';
-                await patients.createOrUpdate(chatId, { bookingDetails: null });
+                await patients.createOrUpdate(chatId, { bookingDetails: null, pendingAppointmentOffer: null });
             } else {
                 const bookingDetails = patient.bookingDetails || {};
                 const selectedTime = parseAppointmentTime(patientMessage, bookingDetails.availableSlots || []);
@@ -717,9 +836,37 @@ router.post('/', async (req, res) => {
                 const availability = getLiveTokenAvailability(clinicData);
                 if (!availability.canIssueLiveToken) {
                     const department = resolveDepartment(entities, clinicData);
-                    responseText = appointmentDatePrompt(availability.nextOpening);
-                    nextState = 'awaiting_appointment_date';
-                    await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName: entities?.doctor || null } });
+                    const doctorName = entities?.doctor || null;
+                    const nextOpeningDate = availability.nextOpening
+                        ? `${availability.nextOpening.year}-${String(availability.nextOpening.month).padStart(2, '0')}-${String(availability.nextOpening.day).padStart(2, '0')}`
+                        : istDateIso();
+
+                    if (wantsEarliestAvailableAppointment(patientMessage)) {
+                        const offer = await findNextAvailableAppointmentOffer({
+                            clinicId,
+                            clinicData,
+                            department,
+                            doctorName,
+                            fromDate: nextOpeningDate,
+                        });
+                        if (offer) {
+                            responseText = `📅 Next available appointment for ${department} is on ${formatIsoDateForPatient(offer.date)} at ${displaySlot(offer.time)}. Would you like to book this slot?`;
+                            nextState = 'awaiting_appointment_confirmation';
+                            await patients.createOrUpdate(chatId, {
+                                bookingDetails: null,
+                                pendingAppointmentOffer: offer,
+                            });
+                            logger.info(`[Booking] Created pending future slot offer for ${chatId}: ${offer.date} ${offer.time} (${department}).`);
+                        } else {
+                            responseText = appointmentDatePrompt(availability.nextOpening);
+                            nextState = 'awaiting_appointment_date';
+                            await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName }, pendingAppointmentOffer: null });
+                        }
+                    } else {
+                        responseText = appointmentDatePrompt(availability.nextOpening);
+                        nextState = 'awaiting_appointment_date';
+                        await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName }, pendingAppointmentOffer: null });
+                    }
                     logger.info(`[Booking] Redirected closed-hours request for ${chatId} to future scheduling: clinic ${clinicId} is ${availability.reason}.`);
                 } else {
                     const department = resolveDepartment(entities, clinicData);
@@ -808,4 +955,10 @@ module.exports._test = {
     appointmentDatePrompt,
     formatIsoDateForPatient,
     wantsClinicalAppointment,
+    isExplicitAppointmentCancellation,
+    buildPendingAppointmentOffer,
+    isPendingAppointmentOfferValid,
+    confirmsPendingAppointmentOffer,
+    wantsEarliestAvailableAppointment,
+    PENDING_APPOINTMENT_OFFER_TTL_MS,
 };

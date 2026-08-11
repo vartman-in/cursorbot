@@ -100,8 +100,27 @@ async function run() {
     same(webhookTest.parseAppointmentTime('2 baje', ['09:00', '10:00', '14:00']), '14:00', 'ambiguous hour prefers the displayed afternoon slot');
     verify(webhookTest.appointmentDatePrompt({ year: 2026, month: 8, day: 12 }).includes('12 August'), 'closed-hours prompt displays a human-readable next opening');
     verify(webhookTest.wantsClinicalAppointment('Fever hai, doctor kab milenge?'), 'symptom message asking for doctor availability is recognised as a booking request');
+    verify(webhookTest.wantsEarliestAvailableAppointment('Doctor kab milenge?'), 'doctor-availability question requests the earliest offered slot');
 
-    console.log('\n── 6. Future scheduling safeguards ──');
+    console.log('\n── 6. Pending slot offer state safeguards ──');
+    const offerCreatedAt = new Date('2099-08-11T18:00:00.000Z');
+    const pendingOffer = webhookTest.buildPendingAppointmentOffer({
+        clinicId: 'clinic-01', department: 'General Medicine', date: '2026-08-12', time: '09:00', now: offerCreatedAt,
+    });
+    same(pendingOffer.clinicId, 'clinic-01', 'pending offer retains its clinic scope');
+    same(pendingOffer.department, 'General Medicine', 'pending offer retains its department');
+    same(pendingOffer.date, '2026-08-12', 'pending offer retains its appointment date');
+    same(pendingOffer.time, '09:00', 'pending offer retains its appointment time');
+    same(new Date(pendingOffer.expiresAt).getTime() - offerCreatedAt.getTime(), webhookTest.PENDING_APPOINTMENT_OFFER_TTL_MS, 'pending offer uses a ten-minute expiry');
+    verify(webhookTest.isPendingAppointmentOfferValid(pendingOffer, new Date('2099-08-11T18:09:59.000Z')), 'unexpired pending offer remains valid');
+    verify(!webhookTest.isPendingAppointmentOfferValid(pendingOffer, new Date('2099-08-11T18:10:00.000Z')), 'expired pending offer is rejected');
+    verify(webhookTest.confirmsPendingAppointmentOffer('haan', pendingOffer), 'simple Hinglish affirmation confirms a pending offer');
+    verify(webhookTest.confirmsPendingAppointmentOffer('Haan, 9 baje wala slot book kar do.', pendingOffer), 'Hinglish confirmation with the offered time confirms a pending offer');
+    verify(!webhookTest.confirmsPendingAppointmentOffer('10 baje wala slot book kar do.', pendingOffer), 'different time cannot confirm the pending offer');
+    verify(!webhookTest.isExplicitAppointmentCancellation('Emergency nahi hai, lekin appointment chahiye.'), 'ordinary Hinglish negation does not cancel scheduling');
+    verify(webhookTest.isExplicitAppointmentCancellation('booking cancel karo'), 'explicit booking cancellation clears scheduling');
+
+    console.log('\n── 7. Future scheduling safeguards ──');
     const schedulingClinic = { operatingHours: {
         Monday: { open: '09:00', close: '10:00' }, Tuesday: { open: '09:00', close: '10:00' },
         Wednesday: { open: '09:00', close: '10:00' }, Thursday: { open: '09:00', close: '10:00' },
@@ -114,7 +133,7 @@ async function run() {
     same(appointments.displaySlot('14:05'), '2:05 PM', 'slot displays in patient-friendly time');
     await mustReject(() => appointments.bookFutureAppointment({ clinicId: 'clinic-01', patientId: 'patient-01', department: 'General Medicine', date: '2020-01-01', time: '09:00' }), /Appointment database is unavailable/, 'booking safely fails while database is unavailable');
 
-    console.log('\n── 7. Staff authentication and tenant scoping ──');
+    console.log('\n── 8. Staff authentication and tenant scoping ──');
     const previousJwt = process.env.JWT_SECRET;
     const previousUsers = process.env.STAFF_USERS_JSON;
     process.env.JWT_SECRET = 'unit-test-signing-secret';
@@ -134,7 +153,7 @@ async function run() {
     if (previousJwt === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = previousJwt;
     if (previousUsers === undefined) delete process.env.STAFF_USERS_JSON; else process.env.STAFF_USERS_JSON = previousUsers;
 
-    console.log('\n── 8. Privacy-safe staff alerts ──');
+    console.log('\n── 9. Privacy-safe staff alerts ──');
     const privacySafeAlert = alerts.buildStaffAlertPayload({
         alertType: 'Urgent symptom review requested', clinicName: 'Test Clinic', patientReference: 'PATIENT-4321',
         patientName: 'Ankit', cleanPhone: '918426862111', lastUserMessage: 'I have a private concern.', tokenStr: '12', includePatientPii: false,
@@ -147,7 +166,7 @@ async function run() {
     });
     verify(restrictedPiiAlert.whatsappAlert.includes('Ankit') && restrictedPiiAlert.whatsappAlert.includes('918426862111'), 'explicitly restricted alert mode includes patient details when enabled');
 
-    console.log('\n── 9. Audit record correlation ──');
+    console.log('\n── 10. Audit record correlation ──');
     const auditEvent = await audit.logStaffAction({ clinicId: 'clinic-01', actor: { email: 'frontdesk@test.example', role: 'receptionist' }, action: 'queue.advance', target: { queueDate: date, department: 'General Medicine' }, requestId: 'req-smoke-test-001' });
     same(auditEvent.clinicId, 'clinic-01', 'audit event retains clinic ID');
     same(auditEvent.action, 'queue.advance', 'audit event retains mutation action');
