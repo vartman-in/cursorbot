@@ -98,29 +98,88 @@ function parseAppointmentDate(message, now = new Date()) {
     const input = String(message || '').trim().toLowerCase();
     const direct = input.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
     if (direct) return direct[1];
+
     const today = istDateIso(now);
     if (/\b(aaj|today)\b/.test(input)) return today;
     if (/\b(kal|tomorrow)\b/.test(input)) return addDaysIso(today, 1);
-    return null;
+
+    // Accept patient-friendly dates such as "12 August", "12 Aug 2026", and
+    // "August 12". The date must still be validated by appointmentService
+    // before a slot is shown or reserved.
+    const monthNames = {
+        jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
+        apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
+        aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9,
+        nov: 10, november: 10, dec: 11, december: 11,
+    };
+    const dayFirst = input.match(/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s*,?\s*(20\d{2}))?\b/i);
+    const monthFirst = input.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:\s*,?\s*(20\d{2}))?\b/i);
+    const match = dayFirst || monthFirst;
+    if (!match) return null;
+
+    const day = Number(dayFirst ? match[1] : match[2]);
+    const monthWord = String(dayFirst ? match[2] : match[1]).toLowerCase();
+    const year = Number(match[3] || today.slice(0, 4));
+    const month = monthNames[monthWord];
+    if (!Number.isInteger(day) || month === undefined || day < 1 || day > 31) return null;
+
+    const candidate = new Date(Date.UTC(year, month, day));
+    if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month || candidate.getUTCDate() !== day) return null;
+    return candidate.toISOString().slice(0, 10);
 }
 
-function parseAppointmentTime(message) {
+function parseAppointmentTime(message, availableSlots = []) {
     const input = String(message || '').trim().toLowerCase();
-    const match = input.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b/);
+    const match = input.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|baje)?\b/);
     if (!match) return null;
-    let hour = Number(match[1]);
+
+    const rawHour = Number(match[1]);
     const minute = Number(match[2] || 0);
     const suffix = (match[3] || '').replace(/\./g, '');
-    if (minute > 59 || hour > 23 || (!suffix && hour > 23)) return null;
-    if (suffix === 'pm' && hour < 12) hour += 12;
-    if (suffix === 'am' && hour === 12) hour = 0;
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    if (minute > 59 || rawHour > 23 || rawHour < 0) return null;
+
+    const candidates = [];
+    if (suffix === 'pm' && rawHour <= 12) {
+        candidates.push(rawHour === 12 ? 12 : rawHour + 12);
+    } else if (suffix === 'am' && rawHour <= 12) {
+        candidates.push(rawHour === 12 ? 0 : rawHour);
+    } else if (suffix === 'baje' || !suffix) {
+        // Prefer a listed slot when the patient writes a familiar short form
+        // such as "10 baje", "10 am", or simply "10".
+        if (rawHour <= 12) {
+            candidates.push(rawHour === 12 ? 12 : rawHour, rawHour === 12 ? 0 : rawHour + 12);
+        } else {
+            candidates.push(rawHour);
+        }
+    } else {
+        return null;
+    }
+
+    const formatted = candidates.map((hour) => `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+    const listed = formatted.find((time) => availableSlots.includes(time));
+    return listed || formatted[0] || null;
+}
+
+function formatIsoDateForPatient(isoDate) {
+    if (!isoDate) return null;
+    const [year, month, day] = isoDate.split('-').map(Number);
+    return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long', year: 'numeric' })
+        .format(new Date(Date.UTC(year, month - 1, day)));
 }
 
 function appointmentDatePrompt(nextOpening) {
     const opening = nextOpening ? `${nextOpening.year}-${String(nextOpening.month).padStart(2, '0')}-${String(nextOpening.day).padStart(2, '0')}` : null;
-    return `Namastey sir, abhi live token issue nahi ho sakta. Aap future appointment book kar sakte hain. ` +
-        `Kripya appointment ki date YYYY-MM-DD format mein bhejein${opening ? ` (next opening: ${opening})` : ''}.`;
+    const displayOpening = formatIsoDateForPatient(opening);
+    return `Namastey sir, abhi clinic hours ke bahar live token issue nahi ho sakta. Aap future appointment book kar sakte hain. ` +
+        `Kripya preferred date bhejein—for example, “12 August”, “kal”, ya “YYYY-MM-DD”${displayOpening ? ` (next opening: ${displayOpening})` : ''}.`;
+}
+
+function wantsClinicalAppointment(message) {
+    return /\b(appointment|book|booking|consultation|consult|doctor|dikhana|milna|milenge|kab milega|kab milenge)\b/i.test(String(message || ''));
+}
+
+function isAffirmative(message) {
+    return /^\s*(yes|y|haan|ha|han|ji|theek hai|thik hai|book|book karo|kar do)\s*[.!]?\s*$/i.test(String(message || ''));
 }
 
 // 🕒 Real-Time Clinic Schedule Guard — prevents the bot from handing out a
@@ -442,8 +501,15 @@ router.post('/', async (req, res) => {
         // 3. Classify Intent using Groq
         const classification = await classifyIntent(patientMessage, patient.conversationHistory.slice(-3));
         const { intent: classifiedIntent, entities } = classification;
-        
-        const intent = looksLikeStatusQuery(patientMessage) ? 'check_status' : classifiedIntent;
+
+        // A patient asking when a clinician is available must continue into the
+        // appointment workflow even if a probabilistic classifier labels the
+        // symptom text as a generic handoff. Deterministic emergency screening
+        // below still has absolute priority.
+        let intent = looksLikeStatusQuery(patientMessage) ? 'check_status' : classifiedIntent;
+        if (wantsClinicalAppointment(patientMessage) && ['human_handoff', 'medical_advice', 'symptom_inquiry', 'general_inquiry'].includes(intent)) {
+            intent = 'book_appointment';
+        }
         logger.info(`[Webhook] Classified intent: ${intent} for ${chatId}`);
 
         // 4. Handle based on intent and current state
@@ -459,10 +525,12 @@ router.post('/', async (req, res) => {
         // The classifier may assist, but it never has authority to suppress a
         // high-risk phrase that requires escalation.
         const safetyScreen = triageMessage(patientMessage);
-        const isEmergency = safetyScreen.level === 'emergency' || intent === 'human_handoff' ||
+        const isEmergency = safetyScreen.level === 'emergency' ||
                            (entities.symptoms && entities.symptoms.some(s =>
                                ['chest pain', 'bleeding', 'breathing', 'unconscious', 'emergency'].includes(s.toLowerCase())
                            ));
+        const isExplicitHumanHandoff = classifiedIntent === 'human_handoff' && !wantsClinicalAppointment(patientMessage);
+        let urgentNotice = '';
 
         // ==========================================
         // 🛑 EMERGENCY LOOP BYPASS
@@ -470,30 +538,43 @@ router.post('/', async (req, res) => {
         if (isEmergency) {
             responseText = getEmergencyReply();
             nextState = 'human_handling';
-            
+
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
             await alertStaff(
-                chatId, 
-                patientName, 
-                intent === 'human_handoff' ? 'Human Handoff Requested' : 'Medical Emergency Detected', 
-                transcript, 
+                chatId,
+                patientName,
+                'Medical Emergency Detected',
+                transcript,
                 clinicData?.clinicId || instanceId
             );
 
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
             await patients.updateFlowState(chatId, nextState);
-            
+
             await sendMessage(chatId, responseText);
             logger.info(`[Webhook] Emergency response sent to ${chatId}. Halted further processing.`);
-            return; 
+            return;
         }
 
-        // Urgent-but-not-emergency messages are escalated to staff without
-        // claiming a diagnosis or blocking the patient's future messages.
-        else if (safetyScreen.level === 'urgent') {
-            responseText = getUrgentReply();
-            nextState = 'idle';
+        // A deliberate handoff request remains available, but a patient asking
+        // when a clinician can see them follows booking instead of being muted.
+        if (isExplicitHumanHandoff) {
+            responseText = 'Namastey sir, aapka message authorised clinic staff ko forward kar diya gaya hai. Team member aapse yahin reply karega.';
+            nextState = 'human_handling';
+            const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+            await alertStaff(chatId, patientName, 'Human handoff requested', transcript, clinicData?.clinicId || instanceId);
+        }
+
+        if (safetyScreen.level === 'urgent') {
+            // Alert staff but continue the operational booking journey. An
+            // urgent classification never authorises medical advice and never
+            // prevents a patient from receiving the earliest valid slot.
+            const availability = getLiveTokenAvailability(clinicData);
+            const nextOpening = availability.nextOpening
+                ? formatIsoDateForPatient(`${availability.nextOpening.year}-${String(availability.nextOpening.month).padStart(2, '0')}-${String(availability.nextOpening.day).padStart(2, '0')}`)
+                : null;
+            urgentNotice = getUrgentReply({ canIssueLiveToken: availability.canIssueLiveToken, nextOpening });
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
             await alertStaff(chatId, patientName, 'Urgent symptom review requested', transcript, clinicData?.clinicId || instanceId);
         }
@@ -501,7 +582,10 @@ router.post('/', async (req, res) => {
         // Future appointment state: date selection. This is intentionally
         // deterministic and runs before token logic, so a closed clinic never
         // turns a future visit request into a same-day queue token.
-        else if (patient.currentFlowState === 'awaiting_appointment_date') {
+        if (isExplicitHumanHandoff) {
+            // The handoff response and state were already set above. Do not
+            // send it through ordinary status, booking, or LLM handling.
+        } else if (patient.currentFlowState === 'awaiting_appointment_date') {
             if (/\b(cancel|stop|nahi)\b/i.test(patientMessage)) {
                 responseText = 'Appointment booking cancelled. Jab aap ready hon, kripya date ke saath dobara message karein.';
                 nextState = 'idle';
@@ -521,7 +605,7 @@ router.post('/', async (req, res) => {
                             : 'Abhi appointment dates available nahi hain. Kripya clinic reception se sampark karein.';
                         nextState = 'awaiting_appointment_date';
                     } else {
-                        await patients.createOrUpdate(chatId, { bookingDetails: { department, date, doctorName: patient.bookingDetails?.doctorName || null } });
+                        await patients.createOrUpdate(chatId, { bookingDetails: { department, date, availableSlots: slots, doctorName: patient.bookingDetails?.doctorName || null } });
                         responseText = `Aapke liye ${department} mein ${date} ko yeh time slots available hain: ${slots.slice(0, 8).map(displaySlot).join(', ')}. Kripya exact time bhejein, jaise 10:00 AM.`;
                         nextState = 'awaiting_appointment_time';
                     }
@@ -538,7 +622,7 @@ router.post('/', async (req, res) => {
                 await patients.createOrUpdate(chatId, { bookingDetails: null });
             } else {
                 const bookingDetails = patient.bookingDetails || {};
-                const selectedTime = parseAppointmentTime(patientMessage);
+                const selectedTime = parseAppointmentTime(patientMessage, bookingDetails.availableSlots || []);
                 if (!bookingDetails.date || !selectedTime) {
                     responseText = 'Kripya listed time mein se exact time bhejein, jaise 10:00 AM. Date change karne ke liye “cancel” likhkar booking dobara shuru karein.';
                     nextState = 'awaiting_appointment_time';
@@ -674,6 +758,12 @@ router.post('/', async (req, res) => {
             responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
         }
 
+        // Keep the safety guidance visible while still allowing a valid
+        // appointment/token branch to complete for urgent-but-not-emergency cases.
+        if (urgentNotice && responseText) {
+            responseText = `${urgentNotice}\n\n${responseText}`;
+        }
+
         // 5. Loop guard
         const rawResponseText = responseText;
         const loopState = patient._loopGuard || { rawResponse: null, count: 0 };
@@ -710,3 +800,12 @@ router.get('/health', (_req, res) => {
 });
 
 module.exports = router;
+// Pure helpers are exposed only for deterministic regression tests. Express
+// continues to receive the router object as the module export.
+module.exports._test = {
+    parseAppointmentDate,
+    parseAppointmentTime,
+    appointmentDatePrompt,
+    formatIsoDateForPatient,
+    wantsClinicalAppointment,
+};

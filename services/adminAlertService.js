@@ -19,6 +19,45 @@ function now() {
   });
 }
 
+/**
+ * Builds alert-channel content with minimum necessary patient information by
+ * default. Full patient detail is an explicit clinic decision, not a default.
+ */
+function buildStaffAlertPayload({ alertType, clinicName, patientReference, patientName, cleanPhone, lastUserMessage, tokenStr, includePatientPii }) {
+  const slackFields = [
+    { type: "mrkdwn", text: `*Patient Reference*\n${patientReference}` },
+    { type: "mrkdwn", text: `*Action Required*\nReview the authorised dashboard immediately.` },
+  ];
+
+  if (includePatientPii) {
+    slackFields.push(
+      { type: "mrkdwn", text: `*Patient Name*\n${patientName || 'Unknown'}` },
+      { type: "mrkdwn", text: `*Phone Number*\n+${cleanPhone}` },
+      { type: "mrkdwn", text: `*Patient Message*\n"${lastUserMessage}"` },
+    );
+  }
+  if (tokenStr) slackFields.push({ type: "mrkdwn", text: `*Token Number*\n${tokenStr}` });
+
+  const fallback = `CLINIC ALERT: ${alertType} at ${clinicName} — ${patientReference}. Review the authorised dashboard immediately.`;
+  const smsBody = includePatientPii
+    ? `CLINIC ALERT (${clinicName}): ${alertType}\nPatient: ${patientName || cleanPhone}\nMessage: "${lastUserMessage}"\nUse only the authorised staff workflow.`
+    : `CLINIC ALERT (${clinicName}): ${alertType}\nReference: ${patientReference}\nPlease review the authorised dashboard immediately.`;
+
+  let whatsappAlert =
+    `🚨 *${String(alertType || '').toUpperCase()}* 🚨\n\n` +
+    `*Patient Reference:* ${patientReference}\n`;
+  if (tokenStr) whatsappAlert += `*Token Number:* ${tokenStr}\n`;
+  if (includePatientPii) {
+    whatsappAlert +=
+      `*Patient Name:* ${patientName || 'Unknown'}\n` +
+      `*Phone Number:* +${cleanPhone}\n` +
+      `*Patient Message:* "${lastUserMessage}"\n`;
+  }
+  whatsappAlert += '\n_Please review the authorised dashboard and follow the clinic escalation protocol._';
+
+  return { slackFields, fallback, smsBody, whatsappAlert };
+}
+
 // ─── Slack ────────────────────────────────────────────────────────────────────
 
 /**
@@ -138,20 +177,24 @@ async function alertStaff(chatId, patientName, alertType, transcript, tenantId) 
   }
   
   const cleanPhone = chatId.replace('@c.us', '');
+  const patientReference = `PATIENT-${cleanPhone.slice(-4) || 'UNKNOWN'}`;
+  // Staff alerts may be delivered through third-party channels. Keep them
+  // privacy-minimised by default; a clinic may explicitly enable full details
+  // only for its restricted, authorised staff destination.
+  const includePatientPii = process.env.ALERT_INCLUDE_PATIENT_PII === 'true';
 
   // 5. Execute the alert pipeline outside the DB try/catch
   try {
-    
-    // Construct clean Slack fields
-    const slackFields = [
-      { type: "mrkdwn", text: `*Patient Name*\n${patientName || 'Unknown'}` },
-      { type: "mrkdwn", text: `*Phone Number*\n+${cleanPhone}` },
-      { type: "mrkdwn", text: `*Customer Message*\n"${lastUserMessage}"` }
-    ];
-
-    if (tokenStr) {
-      slackFields.push({ type: "mrkdwn", text: `*Token Number*\n${tokenStr}` });
-    }
+    const alertPayload = buildStaffAlertPayload({
+      alertType,
+      clinicName,
+      patientReference,
+      patientName,
+      cleanPhone,
+      lastUserMessage,
+      tokenStr,
+      includePatientPii,
+    });
 
     const blocks = [
       {
@@ -161,38 +204,21 @@ async function alertStaff(chatId, patientName, alertType, transcript, tenantId) 
       { type: "divider" },
       {
         type: "section",
-        fields: slackFields,
+        fields: alertPayload.slackFields,
       },
       { type: "divider" },
     ];
 
-    const fallback = `🚨 CLINIC EMERGENCY: ${alertType} for patient ${patientName || cleanPhone} at ${clinicName}`;
-    const smsBody = `CLINIC ALERT (${clinicName}): ${alertType}\nPatient: ${patientName || cleanPhone}\nMessage: "${lastUserMessage}"\nPlease check dashboard immediately.`;
-
     const alertPromises = [
-      postToSlack(blocks, fallback),
-      sendSms(smsBody)
+      postToSlack(blocks, alertPayload.fallback),
+      sendSms(alertPayload.smsBody)
     ];
 
     if (staffPhone) {
       const staffChatId = staffPhone.includes('@c.us') ? staffPhone : `${staffPhone.replace('+', '')}@c.us`;
       
-      // Construct clean WhatsApp Alert
-      let whatsappAlert = 
-        `🚨 *${alertType.toUpperCase()}* 🚨\n\n` +
-        `*Patient Name:* ${patientName || 'Unknown'}\n` +
-        `*Phone Number:* +${cleanPhone}\n`;
-
-      if (tokenStr) {
-        whatsappAlert += `*Token Number:* ${tokenStr}\n`;
-      }
-
-      whatsappAlert += 
-        `*Customer Message:* "${lastUserMessage}"\n\n` +
-        `_Please contact this patient immediately._`;
-
       alertPromises.push(
-        sendMessage(staffChatId, whatsappAlert).catch(err => {
+        sendMessage(staffChatId, alertPayload.whatsappAlert).catch(err => {
           console.error(`[AdminAlert] Failed to send WhatsApp alert to staff: ${err.message}`);
         })
       );
@@ -206,4 +232,4 @@ async function alertStaff(chatId, patientName, alertType, transcript, tenantId) 
   }
 }
 
-module.exports = { alertStaff, postToSlack, sendSms };
+module.exports = { alertStaff, postToSlack, sendSms, buildStaffAlertPayload };

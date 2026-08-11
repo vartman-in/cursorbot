@@ -6,6 +6,10 @@
  * safety rules that must remain correct for every clinic tenant.
  */
 const assert = require('assert');
+// The webhook imports the AI client at module-load time. The smoke suite never
+// invokes that client, so a harmless placeholder keeps parser tests fully local
+// when real production credentials are intentionally absent.
+if (!process.env.GROQ_API_KEY) process.env.GROQ_API_KEY = 'smoke-test-placeholder';
 let passed = 0;
 let failed = 0;
 
@@ -34,6 +38,8 @@ async function run() {
     const staffAuth = require('../services/staffAuthService');
     const clinicHours = require('../services/clinicHoursService');
     const audit = require('../services/auditService');
+    const alerts = require('../services/adminAlertService');
+    const webhookTest = require('../routes/webhook')._test;
 
     console.log('── 1. Core module contracts ──');
     [
@@ -82,10 +88,20 @@ async function run() {
     same(triage.triageMessage('Mere bachche ko high fever hai').level, 'emergency', 'high fever in a child is routed to emergency escalation');
     same(triage.triageMessage('Mujhe sugar check up jaldi chahiye').level, 'urgent', 'urgent blood-sugar message receives priority attention');
     same(triage.triageMessage('Please book a routine consultation').level, 'routine', 'routine booking remains a receptionist request');
+    same(triage.triageMessage('Namaste, mujhe kal se fever aur body pain hai. Kya doctor milenge?').level, 'routine', 'ordinary fever and body-pain request stays bookable rather than creating a false urgent alert');
     verify(triage.getEmergencyReply().includes('diagnosis nahi kar sakta'), 'emergency reply contains no diagnostic claim');
-    verify(triage.getUrgentReply().includes('diagnosis nahi kar sakta'), 'urgent reply contains no diagnostic claim');
+    verify(triage.getUrgentReply({ canIssueLiveToken: false, nextOpening: '12 August 2026' }).includes('future appointment'), 'urgent reply offers future booking when clinic is closed');
 
-    console.log('\n── 5. Future scheduling safeguards ──');
+    console.log('\n── 5. Patient-friendly future scheduling input ──');
+    same(webhookTest.parseAppointmentDate('2026-08-12'), '2026-08-12', 'ISO appointment date is accepted');
+    same(webhookTest.parseAppointmentDate('12 August 2026'), '2026-08-12', 'day-first natural-language date is accepted');
+    same(webhookTest.parseAppointmentDate('August 12, 2026'), '2026-08-12', 'month-first natural-language date is accepted');
+    same(webhookTest.parseAppointmentTime('10 baje', ['09:00', '10:00', '14:00']), '10:00', 'Hinglish hour input resolves to a displayed slot');
+    same(webhookTest.parseAppointmentTime('2 baje', ['09:00', '10:00', '14:00']), '14:00', 'ambiguous hour prefers the displayed afternoon slot');
+    verify(webhookTest.appointmentDatePrompt({ year: 2026, month: 8, day: 12 }).includes('12 August'), 'closed-hours prompt displays a human-readable next opening');
+    verify(webhookTest.wantsClinicalAppointment('Fever hai, doctor kab milenge?'), 'symptom message asking for doctor availability is recognised as a booking request');
+
+    console.log('\n── 6. Future scheduling safeguards ──');
     const schedulingClinic = { operatingHours: {
         Monday: { open: '09:00', close: '10:00' }, Tuesday: { open: '09:00', close: '10:00' },
         Wednesday: { open: '09:00', close: '10:00' }, Thursday: { open: '09:00', close: '10:00' },
@@ -98,7 +114,7 @@ async function run() {
     same(appointments.displaySlot('14:05'), '2:05 PM', 'slot displays in patient-friendly time');
     await mustReject(() => appointments.bookFutureAppointment({ clinicId: 'clinic-01', patientId: 'patient-01', department: 'General Medicine', date: '2020-01-01', time: '09:00' }), /Appointment database is unavailable/, 'booking safely fails while database is unavailable');
 
-    console.log('\n── 6. Staff authentication and tenant scoping ──');
+    console.log('\n── 7. Staff authentication and tenant scoping ──');
     const previousJwt = process.env.JWT_SECRET;
     const previousUsers = process.env.STAFF_USERS_JSON;
     process.env.JWT_SECRET = 'unit-test-signing-secret';
@@ -118,7 +134,20 @@ async function run() {
     if (previousJwt === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = previousJwt;
     if (previousUsers === undefined) delete process.env.STAFF_USERS_JSON; else process.env.STAFF_USERS_JSON = previousUsers;
 
-    console.log('\n── 7. Audit record correlation ──');
+    console.log('\n── 8. Privacy-safe staff alerts ──');
+    const privacySafeAlert = alerts.buildStaffAlertPayload({
+        alertType: 'Urgent symptom review requested', clinicName: 'Test Clinic', patientReference: 'PATIENT-4321',
+        patientName: 'Ankit', cleanPhone: '918426862111', lastUserMessage: 'I have a private concern.', tokenStr: '12', includePatientPii: false,
+    });
+    verify(privacySafeAlert.whatsappAlert.includes('PATIENT-4321'), 'privacy-safe alert retains a staff reference');
+    verify(!privacySafeAlert.whatsappAlert.includes('Ankit') && !privacySafeAlert.whatsappAlert.includes('918426862111') && !privacySafeAlert.whatsappAlert.includes('private concern'), 'privacy-safe alert omits name, phone, and message by default');
+    const restrictedPiiAlert = alerts.buildStaffAlertPayload({
+        alertType: 'Urgent symptom review requested', clinicName: 'Test Clinic', patientReference: 'PATIENT-4321',
+        patientName: 'Ankit', cleanPhone: '918426862111', lastUserMessage: 'I have a private concern.', tokenStr: null, includePatientPii: true,
+    });
+    verify(restrictedPiiAlert.whatsappAlert.includes('Ankit') && restrictedPiiAlert.whatsappAlert.includes('918426862111'), 'explicitly restricted alert mode includes patient details when enabled');
+
+    console.log('\n── 9. Audit record correlation ──');
     const auditEvent = await audit.logStaffAction({ clinicId: 'clinic-01', actor: { email: 'frontdesk@test.example', role: 'receptionist' }, action: 'queue.advance', target: { queueDate: date, department: 'General Medicine' }, requestId: 'req-smoke-test-001' });
     same(auditEvent.clinicId, 'clinic-01', 'audit event retains clinic ID');
     same(auditEvent.action, 'queue.advance', 'audit event retains mutation action');
