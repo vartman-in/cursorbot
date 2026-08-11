@@ -11,8 +11,10 @@ const { parseAdminCommand } = require('../services/features/adminsystemprompt');
 const { logger } = require('../errorHandler');
 const { db } = require('../db');
 const queueService = require('../services/queueService');
+const { resolveClinicContext } = require('../services/clinicContextService');
 const { PatientService } = require('../services/patientService');
 const { DEPARTMENTS } = require('../services/appointmentService');
+const { getLiveTokenAvailability, buildClosedHoursReply } = require('../services/clinicHoursService');
 
 // Quick keyword pre-check for status queries
 const STATUS_PHRASES = [
@@ -283,23 +285,24 @@ router.post('/', async (req, res) => {
         logger.info(`[Webhook] Processing message from ${senderPhone} on Instance ${instanceId}: "${patientMessage.slice(0, 50)}..."`);
 
         // 1. DYNAMIC TENANT RESOLUTION
-        let clinicData = null;
-        if (instanceId) {
-            const clinicsSnapshot = await db.collection('clinics')
-                .where('whatsapp.instanceId', '==', String(instanceId))
-                .limit(1)
-                .get();
-            
-            if (!clinicsSnapshot.empty) {
-                clinicData = clinicsSnapshot.docs[0].data();
-                clinicData.clinicId = clinicsSnapshot.docs[0].id;
-            }
-        }
+        // The resolver returns the actual Firestore clinic document ID. A raw
+        // Green API instance ID must never become a queue ID because the
+        // dashboard reads queue documents by clinic ID.
+        const clinicData = await resolveClinicContext(instanceId);
 
         // 1b. ADMIN COMMAND CHANNEL (Now LLM Powered)
         const handledAsAdmin = await tryHandleAdminCommand({ senderPhone, chatId, message: patientMessage, clinicData, instanceId });
         if (handledAsAdmin) {
             logger.info(`[Webhook] Handled admin LLM command from ${senderPhone}`);
+            return;
+        }
+
+        // A missing mapping must be visible and safe. It must never fall back
+        // to a raw Green API instance ID because that creates a second queue
+        // that the clinic dashboard cannot see.
+        if (!clinicData) {
+            logger.error(`[Webhook] No clinic mapping for Green API instance ${instanceId}; refusing patient action.`);
+            await sendMessage(chatId, 'Namastey sir, clinic configuration is temporarily unavailable. Kripya clinic reception se sampark karein.');
             return;
         }
 
@@ -313,7 +316,7 @@ router.post('/', async (req, res) => {
             patient = await patients.createOrUpdate(chatId, {
                 name: null,
                 phone: senderPhone,
-                clinicId: clinicData?.clinicId || (instanceId ? String(instanceId) : null),
+                clinicId: clinicData?.clinicId || null,
                 conversationHistory: [],
                 currentFlowState: 'awaiting_name'
             });
@@ -362,7 +365,7 @@ router.post('/', async (req, res) => {
 
         // Backfill clinicId for patients created before this field existed —
         // needed for the dashboard's human-handoff query to find them.
-        const resolvedClinicIdForPatient = clinicData?.clinicId || (instanceId ? String(instanceId) : null);
+        const resolvedClinicIdForPatient = clinicData?.clinicId || null;
         if (!patient.clinicId && resolvedClinicIdForPatient) {
             await patients.createOrUpdate(chatId, { clinicId: resolvedClinicIdForPatient });
             patient.clinicId = resolvedClinicIdForPatient;
@@ -381,7 +384,7 @@ router.post('/', async (req, res) => {
         // Fetch the patient's real, live token status ONCE — reused by every
         // branch below instead of each one independently guessing or (worse)
         // letting the LLM free-associate appointment details from memory.
-        const clinicId = clinicData?.clinicId || (instanceId ? String(instanceId) : null);
+        const clinicId = clinicData?.clinicId || null;
         const liveStatus = clinicId ? await queueService.getPatientStatus(chatId) : null;
 
         // Emergency Detection & Human Handoff
@@ -479,21 +482,30 @@ router.post('/', async (req, res) => {
                 responseText = buildClosedMessage(clinicData);
                 nextState = 'idle';
             } else {
-                const department = resolveDepartment(entities, clinicData);
-                const booking = await queueService.bookToken({
-                    clinicId, chatId, patientName, department,
-                    phone: senderPhone,
-                    reason: (entities?.symptoms || []).join(', ') || patientMessage.slice(0, 200),
-                });
-                const waiting = Math.max(booking.tokenNumber - booking.currentToken, 0);
+                // Server-side guardrail: the LLM may describe timings, but only
+                // this deterministic check may authorize a live token.
+                const availability = getLiveTokenAvailability(clinicData);
+                if (!availability.canIssueLiveToken) {
+                    responseText = buildClosedHoursReply(clinicData);
+                    nextState = 'idle';
+                    logger.info(`[Booking] Denied live token for ${chatId}: clinic ${clinicId} is ${availability.reason}.`);
+                } else {
+                    const department = resolveDepartment(entities, clinicData);
+                    const booking = await queueService.bookToken({
+                        clinicId, chatId, patientName, department,
+                        phone: senderPhone,
+                        reason: (entities?.symptoms || []).join(', ') || patientMessage.slice(0, 200),
+                    });
+                    const waiting = Math.max(booking.tokenNumber - booking.currentToken, 0);
 
-                responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}.\n` +
-                    `👉 Now serving: #${booking.currentToken}\n` +
-                    (waiting > 0
-                        ? `⏳ Estimated wait: ~${booking.estimatedWaitMinutes} min.\n`
-                        : `You're next in line!\n`) +
-                    `Reply "Status" anytime to check your position.`;
-                nextState = 'idle';
+                    responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}.\n` +
+                        `👉 Now serving: #${booking.currentToken}\n` +
+                        (waiting > 0
+                            ? `⏳ Estimated wait: ~${booking.estimatedWaitMinutes} min.\n`
+                            : `You're next in line!\n`) +
+                        `Reply "Status" anytime to check your position.`;
+                    nextState = 'idle';
+                }
             }
         }
         
