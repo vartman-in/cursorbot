@@ -589,6 +589,26 @@ router.post('/', async (req, res) => {
         const classification = await classifyIntent(patientMessage, patient.conversationHistory.slice(-3));
         const { intent: classifiedIntent, entities } = classification;
 
+        // Check if user is correcting a mistaken booking or expressing negation ("mene nahi bola", "nahi karni")
+        const isCorrectionOrNegation = /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
+        if (isCorrectionOrNegation) {
+            // If they have an active token or pending offer, cancel/reset it gracefully and apologize
+            if (liveStatus) {
+                try {
+                    await PatientService.handlePatientAction({ chatId, action: 'cancel', reason: 'Patient correction: ' + patientMessage });
+                } catch (e) {
+                    // Ignore if already inactive
+                }
+            }
+            const apologyText = `Namastey sir/ma'am, mujhe khed hai agar mujhse koi galatfahmi hui ho. Maine aapki booking/token request cancel kar di hai. Kripya batayein, main aapki kis prakar sahayta kar sakta hu (jaise clinic timings ya doctor availability)?`;
+            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: apologyText });
+            await patients.updateFlowState(chatId, 'idle');
+            await patients.createOrUpdate(chatId, { pendingAppointmentOffer: null, bookingDetails: null });
+            await sendMessage(chatId, apologyText);
+            return;
+        }
+
         // A patient asking when a clinician is available must continue into the
         // appointment workflow even if a probabilistic classifier labels the
         // symptom text as a generic handoff. Deterministic emergency screening
