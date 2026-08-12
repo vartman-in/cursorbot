@@ -89,6 +89,7 @@ async function generateResponse(messages, tenantId = null, clinicDataOrOptions =
     });
 
     try {
+        logger.info(`[Groq] Calling generateResponse with model: ${model}`);
         const completion = await groq.chat.completions.create({
             model,
             max_tokens: maxTokens,
@@ -102,9 +103,10 @@ async function generateResponse(messages, tenantId = null, clinicDataOrOptions =
         const text = completion.choices?.[0]?.message?.content?.trim();
         if (!text) throw new Error("Groq returned an empty response.");
 
+        logger.info(`[Groq] generateResponse success. Model: ${model}`);
         return text;
     } catch (err) {
-        console.error(`[Groq] generateResponse failed: ${err.message}`);
+        logger.error(`[Groq] generateResponse failed: ${err.message}`);
         return "I'm sorry, I'm having trouble processing your request right now. Please try again later or call our clinic directly.";
     }
 }
@@ -154,6 +156,7 @@ Respond ONLY with valid JSON:
 }`;
 
     try {
+        logger.info(`[Groq] Calling classifyIntent with model: ${MODELS.fast}`);
         const completion = await groq.chat.completions.create({
             model: MODELS.fast,
             max_tokens: 300,
@@ -164,9 +167,11 @@ Respond ONLY with valid JSON:
 
         const raw = completion.choices?.[0]?.message?.content?.trim() || "";
         const objMatch = raw.match(/\{.*\}/s);
-        return JSON.parse(objMatch ? objMatch[0] : raw);
+        const result = JSON.parse(objMatch ? objMatch[0] : raw);
+        logger.info(`[Groq] classifyIntent success. Intent: ${result.intent}`);
+        return result;
     } catch (err) {
-        console.warn(`[Groq] classifyIntent fallback: ${err.message}`);
+        logger.warn(`[Groq] classifyIntent fallback: ${err.message}`);
         return { intent: "unknown", confidence: 0, entities: {} };
     }
 }
