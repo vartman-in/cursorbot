@@ -36,6 +36,10 @@ const STATUS_AMBIGUOUS_MAX_WORDS = 4;
 
 function looksLikeStatusQuery(message) {
     const lower = message.toLowerCase().trim();
+    // If the patient is complaining or stating they didn't book, it's NOT a status query
+    if (/(booking|book|nahi|bula|bola|kiya|karna)\b/i.test(lower)) {
+        return false;
+    }
     if (STATUS_PHRASES.some((kw) => lower.includes(kw))) return true;
 
     const wordCount = lower.split(/\s+/).filter(Boolean).length;
