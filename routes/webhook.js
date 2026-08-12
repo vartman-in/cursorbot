@@ -580,7 +580,8 @@ router.post('/', async (req, res) => {
         // Backfill clinicId for patients created before this field existed —
         // needed for the dashboard's human-handoff query to find them.
         const resolvedClinicIdForPatient = clinicData?.clinicId || null;
-        if (!patient.clinicId && resolvedClinicIdForPatient) {
+        if (resolvedClinicIdForPatient && patient.clinicId !== resolvedClinicIdForPatient) {
+            logger.info(`[Webhook] Synchronizing clinicId for patient ${chatId}: ${patient.clinicId} -> ${resolvedClinicIdForPatient}`);
             await patients.createOrUpdate(chatId, { clinicId: resolvedClinicIdForPatient });
             patient.clinicId = resolvedClinicIdForPatient;
         }
@@ -672,6 +673,26 @@ router.post('/', async (req, res) => {
                 lastQuery: patientMessage,
                 aiNotes: isEmergencyFlag ? 'Medical Emergency Detected' : 'Urgent Symptom Review Requested',
             });
+            
+            // Update in-memory patient object for consistency
+            patient.currentFlowState = nextState;
+            patient.clinicId = targetClinicId;
+
+            // If patient has an active token, move it to the front of the line (Priority/Emergency)
+            if (patient.activeToken && patient.activeToken.tokenNumber) {
+                try {
+                    const { prioritizeToken } = require('../services/queueService');
+                    await prioritizeToken(
+                        targetClinicId, 
+                        patient.activeToken.department || 'General Physician', 
+                        patient.activeToken.tokenNumber,
+                        patient.activeToken.date
+                    );
+                    logger.info(`[Webhook] Prioritized token #${patient.activeToken.tokenNumber} for emergency patient ${chatId}`);
+                } catch (err) {
+                    logger.error(`[Webhook] Failed to prioritize token for emergency: ${err.message}`);
+                }
+            }
 
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
             await alertStaff(
