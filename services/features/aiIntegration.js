@@ -129,18 +129,24 @@ Classify the patient message for a clinic AI Receptionist.
 Patient message: "${message}"
 
 Valid intents:
-- book_appointment: Patient wants to schedule a new visit / get a token.
+- book_appointment: Patient wants to schedule a new visit / get a token, or asks about doctor availability/timing/booking (e.g., "aaj doctor saab available hai?", "doctor hai kya aaj", "appointment mil jayegi", "timing kya hai").
 - check_status: Patient is asking about their token/queue status or current wait
   (e.g. "Status", "Kitna number chal raha hai?", "Mera number kab aayega?",
   "How many people are ahead of me?", "Token kitna chal raha hai").
 - cancel_appointment: Patient wants to cancel an existing visit.
 - modify_appointment: Patient wants to change an existing visit.
-- ask_faq: Patient has a question about clinic hours, location, services, etc.
+- ask_faq: Patient has a question about clinic hours, location, services, fees, reports, etc.
 - triage: Patient is describing symptoms or asking for medical advice.
 - human_handoff: Patient explicitly asks for a human or describes an emergency.
 - greeting: Simple greeting.
 - farewell: Simple farewell.
 - unknown: Intent is unclear.
+
+Few-shot Hinglish Examples:
+- "aaj doctor saab available hai?" -> {"intent": "book_appointment", "confidence": 0.95, "entities": {"department": "General Medicine"}}
+- "doctor hai kya aaj" -> {"intent": "book_appointment", "confidence": 0.95, "entities": {"department": "General Medicine"}}
+- "timing kya hai clinic ka" -> {"intent": "ask_faq", "confidence": 0.95, "entities": {}}
+- "fees kitni hai" -> {"intent": "ask_faq", "confidence": 0.95, "entities": {}}
 
 Respond ONLY with valid JSON:
 { 

@@ -615,6 +615,13 @@ router.post('/', async (req, res) => {
         // below still has absolute priority.
         const requestedAppointmentId = extractAppointmentId(patientMessage);
         let intent = looksLikeStatusQuery(patientMessage) ? 'check_status' : classifiedIntent;
+        
+        // Deterministic keyword catch for availability / schedule / doctor presence
+        const isAvailabilityQuery = /\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage);
+        if (isAvailabilityQuery && ['unknown', 'human_handoff', 'general_inquiry'].includes(intent)) {
+            intent = 'ask_faq';
+        }
+
         if (requestedAppointmentId && isFutureAppointmentChangeRequest(patientMessage)) {
             intent = 'modify_appointment';
         } else if (wantsClinicalAppointment(patientMessage) && ['human_handoff', 'medical_advice', 'symptom_inquiry', 'general_inquiry'].includes(intent)) {
@@ -1174,7 +1181,7 @@ router.post('/', async (req, res) => {
         const repeatCount = loopState.rawResponse === rawResponseText ? loopState.count + 1 : 1;
 
         if (repeatCount === 2) {
-            responseText = "Sorry, I may have misunderstood your last message. Could you rephrase — e.g. a payment question, directions, or your token status?";
+            responseText = "I'm sorry, I didn't quite catch that. I can help you book an appointment, check doctor timings, get clinic directions, or check your token status. How can I help you today?";
         } else if (repeatCount >= 3) {
             responseText = "I'm sorry, I think I'm misunderstanding your question. I'm connecting you with our clinic staff now so they can help directly.";
             nextState = 'human_handling';
