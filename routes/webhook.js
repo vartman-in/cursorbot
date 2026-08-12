@@ -1056,9 +1056,8 @@ router.post('/', async (req, res) => {
         else if (intent === 'book_appointment') {
             if (liveStatus) {
                 const waiting = Math.max(liveStatus.tokenNumber - liveStatus.currentToken, 0);
-                responseText = `You already have Token #${liveStatus.tokenNumber} for ${liveStatus.department} today.\n` +
-                    `Now serving #${liveStatus.currentToken}` +
-                    (waiting > 0 ? ` — about ${liveStatus.estimatedWaitMinutes} min to go.` : `. You're next!`);
+                responseText = `Namastey sir/ma'am, aapke paas aaj ke liye Token #${liveStatus.tokenNumber} (${liveStatus.department}) pehle se hai (Now serving #${liveStatus.currentToken}).\n` +
+                    `Kya aap apna status check karna chahte hain, naya future appointment book karna chahte hain, ya is token ko cancel karna chahte hain?`;
                 nextState = 'idle';
             } else if (!clinicId) {
                 const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
