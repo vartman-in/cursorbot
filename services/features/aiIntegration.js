@@ -4,8 +4,13 @@
 const { OpenAI } = require("openai");
 const logger = require("../../utils/logger");
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "dummy-key-for-proxy";
-const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.groq.com/openai/v1";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || "dummy-key-for-proxy";
+let OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.groq.com/openai/v1";
+
+// Auto-detect if user provided an OpenAI key but is hitting Groq endpoint
+if (OPENAI_API_KEY.startsWith('sk-') && OPENAI_API_BASE.includes('groq.com')) {
+    logger.warn("[Groq] Detected OpenAI-style key with Groq base URL. If this is not a Groq key, it will fail with 401. Consider setting OPENAI_API_BASE to https://api.openai.com/v1");
+}
 
 const groq = new OpenAI({
     apiKey: OPENAI_API_KEY,
@@ -51,6 +56,9 @@ async function generateResponse(history, instanceId, clinicData, extraContext = 
         return reply;
     } catch (err) {
         logger.error(`[Groq] generateResponse error: ${err.message}`);
+        if (err.status === 401) {
+            return "ERROR_401: Invalid API Key. Please check your GROQ_API_KEY or OPENAI_API_KEY in Render environment variables.";
+        }
         return "Namastey sir/ma'am, clinic reception temporarily busy hai. Kripya thodi der mein message bhejein.";
     }
 }
@@ -113,6 +121,9 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or extr
         return { intents: intentsArray, intent: intentsArray[0] };
     } catch (err) {
         logger.warn(`[Groq] classifyIntent fallback: ${err.message}`);
+        if (err.status === 401) {
+            return { intents: ["error_401"], intent: "error_401", error: "Invalid API Key" };
+        }
         return { intents: ["unknown"], intent: "unknown", confidence: 0, entities: {} };
     }
 }

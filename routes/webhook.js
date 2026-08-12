@@ -594,6 +594,18 @@ router.post('/', async (req, res) => {
         const classifiedIntent = classification.intent || 'unknown';
         const classifiedIntents = classification.intents || [classifiedIntent];
 
+        // Handle technical 401 errors early
+        if (classifiedIntents.includes('error_401')) {
+            responseText = "⚠️ *Technical Configuration Error*: The bot's AI engine is returning a 401 Unauthorized error. Please check the GROQ_API_KEY or OPENAI_API_KEY in your Render environment variables.";
+            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+            await sendMessage(chatId, responseText);
+            
+            const transcript = patient.conversationHistory.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
+            await alertStaff(chatId, patientName, 'Critical Error: 401 Invalid API Key', transcript, clinicData?.clinicId || instanceId);
+            return;
+        }
+
         // Check if user is correcting a mistaken booking or expressing negation ("mene nahi bola", "nahi karni")
         const isCorrectionOrNegation = classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
         if (isCorrectionOrNegation) {
@@ -1219,7 +1231,10 @@ router.post('/', async (req, res) => {
         // 5. Loop guard
         const rawResponseText = responseText;
         const loopState = patient._loopGuard || { rawResponse: null, count: 0 };
-        const repeatCount = loopState.rawResponse === rawResponseText ? loopState.count + 1 : 1;
+        
+        // Only increment loop guard if the response is identical and NOT a transient technical error message
+        const isTechnicalError = rawResponseText && (rawResponseText.includes("temporarily busy") || rawResponseText.includes("ERROR_401"));
+        const repeatCount = (loopState.rawResponse === rawResponseText && !isTechnicalError) ? loopState.count + 1 : 1;
 
         if (repeatCount === 2) {
             responseText = "I'm sorry, I didn't quite catch that. I can help you book an appointment, check doctor timings, get clinic directions, or check your token status. How can I help you today?";
