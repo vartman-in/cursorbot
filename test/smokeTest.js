@@ -103,6 +103,7 @@ async function run() {
     verify(webhookTest.appointmentDatePrompt({ year: 2026, month: 8, day: 12 }).includes('12 August'), 'closed-hours prompt displays a human-readable next opening');
     verify(webhookTest.wantsClinicalAppointment('Fever hai, doctor kab milenge?'), 'symptom message asking for doctor availability is recognised as a booking request');
     verify(webhookTest.wantsEarliestAvailableAppointment('Doctor kab milenge?'), 'doctor-availability question requests the earliest offered slot');
+    same(webhookTest.parseAppointmentDate('I want a future appointment for 13 August 2026'), '2026-08-13', 'future date is correctly extracted from complex sentence');
 
     console.log('\n── 6. Pending slot offer state safeguards ──');
     const offerCreatedAt = new Date('2099-08-11T18:00:00.000Z');

@@ -785,10 +785,21 @@ router.post('/', async (req, res) => {
                             doctorName: bookingDetails.doctorName,
                             reason: patientMessage,
                         });
-                        responseText = `✅ Appointment confirmed for ${appointment.department} on ${appointment.date} at ${displaySlot(appointment.time)}. Appointment ID: ${appointment.id}. Kripya 10 minutes pehle pahunchiye.`;
-                        nextState = 'idle';
-                        await patients.createOrUpdate(chatId, { bookingDetails: null, latestAppointmentId: appointment.id });
-                    } catch (error) {
+	                        responseText = `✅ Appointment confirmed for ${appointment.department} on ${appointment.date} at ${displaySlot(appointment.time)}. Appointment ID: ${appointment.id}. Kripya 10 minutes pehle pahunchiye.`;
+	                        
+	                        // If this was a conversion from a live token, cancel the token now.
+	                        if (bookingDetails.convertFromToken) {
+	                            try {
+	                                await PatientService.handlePatientAction({ chatId, action: 'cancel', reason: `Converted to future appointment ${appointment.id}` });
+	                                responseText += `\n\nAapka aaj ka Token #${bookingDetails.convertFromToken} cancel kar diya gaya hai.`;
+	                            } catch (cancelErr) {
+	                                logger.warn(`[Appointment] Could not cancel token #${bookingDetails.convertFromToken} after conversion for ${chatId}: ${cancelErr.message}`);
+	                            }
+	                        }
+	                        
+	                        nextState = 'idle';
+	                        await patients.createOrUpdate(chatId, { bookingDetails: null, latestAppointmentId: appointment.id });
+	                    } catch (error) {
                         logger.warn(`[Appointment] Could not reserve future slot for ${chatId}: ${error.message}`);
                         responseText = `Yeh slot available nahi raha: ${error.message} Kripya another available time choose karein.`;
                         nextState = 'awaiting_appointment_time';
@@ -956,10 +967,37 @@ router.post('/', async (req, res) => {
                 responseText = 'Future appointment reschedule karne ke liye appointment ID bhejein. Agar aapke paas aaj ka live token hai, “status” likhkar check kar sakte hain.';
                 nextState = 'idle';
             } else {
-                responseText = `You currently have Token #${liveStatus.tokenNumber} for ${liveStatus.department} today — ` +
-                    `this system issues live same-day tokens rather than fixed time slots, so I can't move you to a specific new time. ` +
-                    `If you'd like, just say "cancel" and I'll cancel this token so you can book a fresh one whenever suits you.`;
-                nextState = 'idle';
+                // If the patient has a live token, they can "reschedule" it by
+                // converting it to a future appointment.
+                const requestedDate = parseAppointmentDate(patientMessage);
+                if (requestedDate && requestedDate !== istDateIso()) {
+                    const slots = getSlotsForDate({ clinicData, department: liveStatus.department, date: requestedDate });
+                    if (slots.length) {
+                        await patients.createOrUpdate(chatId, {
+                            bookingDetails: {
+                                department: liveStatus.department,
+                                date: requestedDate,
+                                availableSlots: slots,
+                                convertFromToken: liveStatus.tokenNumber
+                            }
+                        });
+                        responseText = `Aapka Token #${liveStatus.tokenNumber} future appointment mein convert kiya ja sakta hai. ` +
+                            `${formatIsoDateForPatient(requestedDate)} ke liye available slots: ${slots.slice(0, 8).map(displaySlot).join(', ')}. ` +
+                            `Kripya time confirm karein, jaise 10:00 AM. Time confirm hote hi aaj ka token cancel ho jayega.`;
+                        nextState = 'awaiting_appointment_time';
+                    } else {
+                        responseText = `Is date par slots available nahi hain. Kripya another date bhejein.`;
+                        nextState = 'awaiting_appointment_date';
+                        await patients.createOrUpdate(chatId, { bookingDetails: { department: liveStatus.department } });
+                    }
+                } else {
+                    responseText = `You currently have Token #${liveStatus.tokenNumber} for ${liveStatus.department} today — ` +
+                        `this system issues live same-day tokens. ` +
+                        `Agar aap future appointment book karna chahte hain, to kripya date bhejein (jaise "kal"). ` +
+                        `Time confirm hote hi aaj ka token cancel ho jayega.`;
+                    nextState = 'awaiting_appointment_date';
+                    await patients.createOrUpdate(chatId, { bookingDetails: { department: liveStatus.department } });
+                }
             }
         }
         
@@ -1016,20 +1054,43 @@ router.post('/', async (req, res) => {
                     logger.info(`[Booking] Redirected closed-hours request for ${chatId} to future scheduling: clinic ${clinicId} is ${availability.reason}.`);
                 } else {
                     const department = resolveDepartment(entities, clinicData);
-                    const booking = await queueService.bookToken({
-                        clinicId, chatId, patientName, department,
-                        phone: senderPhone,
-                        reason: (entities?.symptoms || []).join(', ') || patientMessage.slice(0, 200),
-                    });
-                    const waiting = Math.max(booking.tokenNumber - booking.currentToken, 0);
+                    const doctorName = entities?.doctor || null;
+                    const date = parseAppointmentDate(patientMessage);
+                    
+                    // If the patient explicitly asked for a future date (e.g. "13 August"),
+                    // route them to the future appointment flow even if the clinic is
+                    // currently open for same-day tokens.
+                    if (date && date !== istDateIso()) {
+                        const slots = getSlotsForDate({ clinicData, department, date });
+                        if (!slots.length) {
+                            const nextDates = await getNextAvailableDates({ clinicData, fromDate: addDaysIso(date, 1), days: 14 });
+                            responseText = nextDates.length
+                                ? `Is date par clinic appointment ke liye available nahi hai. Next available date: ${nextDates[0]}. Kripya apni preferred date YYYY-MM-DD mein bhejein.`
+                                : 'Abhi appointment dates available nahi hain. Kripya clinic reception se sampark karein.';
+                            nextState = 'awaiting_appointment_date';
+                            await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName }, pendingAppointmentOffer: null });
+                        } else {
+                            await patients.createOrUpdate(chatId, { bookingDetails: { department, date, availableSlots: slots, doctorName } });
+                            responseText = `Aapke liye ${department} mein ${date} ko yeh time slots available hain: ${slots.slice(0, 8).map(displaySlot).join(', ')}. Kripya exact time bhejein, jaise 10:00 AM.`;
+                            nextState = 'awaiting_appointment_time';
+                        }
+                        logger.info(`[Booking] Routed future-date request for ${chatId} during open hours: ${date} (${department}).`);
+                    } else {
+                        const booking = await queueService.bookToken({
+                            clinicId, chatId, patientName, department,
+                            phone: senderPhone,
+                            reason: (entities?.symptoms || []).join(', ') || patientMessage.slice(0, 200),
+                        });
+                        const waiting = Math.max(booking.tokenNumber - booking.currentToken, 0);
 
-                    responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}.\n` +
-                        `👉 Now serving: #${booking.currentToken}\n` +
-                        (waiting > 0
-                            ? `⏳ Estimated wait: ~${booking.estimatedWaitMinutes} min.\n`
-                            : `You're next in line!\n`) +
-                        `Reply "Status" anytime to check your position.`;
-                    nextState = 'idle';
+                        responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}.\n` +
+                            `👉 Now serving: #${booking.currentToken}\n` +
+                            (waiting > 0
+                                ? `⏳ Estimated wait: ~${booking.estimatedWaitMinutes} min.\n`
+                                : `You're next in line!\n`) +
+                            `Reply "Status" anytime to check your position.`;
+                        nextState = 'idle';
+                    }
                 }
             }
         }
