@@ -5,7 +5,7 @@ const express = require('express');
 const router = express.Router();
 const { patients, knowledgeBase, appointments } = require('../services/databaseService');
 const { generateResponse, classifyIntent } = require('../services/features/aiIntegration');
-const { sendMessage } = require('../services/greenApi');
+const { sendMessage, sendButtons, sendListMessage } = require('../services/greenApi');
 const { alertStaff } = require('../services/adminAlertService');
 const { parseAdminCommand } = require('../services/features/adminsystemprompt');
 const { logger } = require('../errorHandler');
@@ -516,12 +516,17 @@ router.post('/', async (req, res) => {
             const cleanedName = patientMessage.trim();
             await patients.createOrUpdate(chatId, { name: cleanedName });
             
-            responseText = `Thank you, ${cleanedName}! How can we assist you today? Would you like to check doctor availability or book an appointment?`;
+            responseText = `Thank you, ${cleanedName}! Welcome to City Health Clinic. How may we assist you today?`;
             
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
             await patients.updateFlowState(chatId, 'idle');
-            await sendMessage(chatId, responseText);
+            
+            await sendButtons(chatId, responseText, [
+                { id: 'book_appointment', text: '📅 Book Appointment' },
+                { id: 'check_status', text: '📋 Check My Token' },
+                { id: 'clinic_timings', text: '⏰ Clinic Timings' }
+            ], clinicData?.clinicInfo?.name || 'City Health Clinic');
             return;
         }
 
@@ -1071,8 +1076,24 @@ router.post('/', async (req, res) => {
                             await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName }, pendingAppointmentOffer: null });
                         } else {
                             await patients.createOrUpdate(chatId, { bookingDetails: { department, date, availableSlots: slots, doctorName } });
-                            responseText = `Aapke liye ${department} mein ${date} ko yeh time slots available hain: ${slots.slice(0, 8).map(displaySlot).join(', ')}. Kripya exact time bhejein, jaise 10:00 AM.`;
+                            responseText = `Aapke liye ${department} mein ${date} ko available time slots yeh hain. Kripya apna preferred slot select karein:`;
                             nextState = 'awaiting_appointment_time';
+                            
+                            const slotRows = slots.slice(0, 10).map((s) => ({
+                                id: `slot_${s}`,
+                                title: displaySlot(s),
+                                description: `${department} on ${date}`
+                            }));
+                            
+                            await sendListMessage(
+                                chatId,
+                                responseText,
+                                "Available Time Slots",
+                                "Select Slot",
+                                [{ title: `${department} (${date})`, rows: slotRows }],
+                                clinicData?.clinicInfo?.name || 'City Health Clinic'
+                            );
+                            return;
                         }
                         logger.info(`[Booking] Routed future-date request for ${chatId} during open hours: ${date} (${department}).`);
                     } else {
