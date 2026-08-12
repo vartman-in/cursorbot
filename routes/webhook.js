@@ -614,12 +614,11 @@ router.post('/', async (req, res) => {
         // symptom text as a generic handoff. Deterministic emergency screening
         // below still has absolute priority.
         const requestedAppointmentId = extractAppointmentId(patientMessage);
-        let intent = looksLikeStatusQuery(patientMessage) ? 'check_status' : classifiedIntent;
-        
-        // Deterministic keyword catch for availability / schedule / doctor presence
-        const isAvailabilityQuery = /\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage);
-        if (isAvailabilityQuery && ['unknown', 'human_handoff', 'general_inquiry'].includes(intent)) {
-            intent = 'ask_faq';
+        let intent = classifiedIntent;
+        if (looksLikeStatusQuery(patientMessage)) {
+            intent = 'check_status';
+        } else if (/\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage)) {
+            intent = 'check_availability';
         }
 
         if (requestedAppointmentId && isFutureAppointmentChangeRequest(patientMessage)) {
@@ -900,6 +899,17 @@ router.post('/', async (req, res) => {
                     }
                 }
             }
+        }
+
+        // Check Doctor Availability / Clinic Hours FAQ
+        else if (intent === 'check_availability') {
+            const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
+            history.push({ role: 'user', content: patientMessage });
+            const liveStatusText = liveStatus
+                ? `Note: The patient currently has Token #${liveStatus.tokenNumber} for ${liveStatus.department} today, but they are asking about availability/timings. Answer their availability question first in polite Hinglish based on the clinic context, and gently remind them of their active token if relevant.`
+                : `The patient is asking about doctor availability or clinic timings. Answer directly in polite Hinglish using the clinic details.`;
+            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
+            nextState = patient.currentFlowState;
         }
 
         // Real-Time Status Query

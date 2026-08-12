@@ -129,7 +129,8 @@ Classify the patient message for a clinic AI Receptionist.
 Patient message: "${message}"
 
 Valid intents:
-- book_appointment: Patient wants to schedule a new visit / get a token, or asks about doctor availability/timing/booking (e.g., "aaj doctor saab available hai?", "doctor hai kya aaj", "appointment mil jayegi", "timing kya hai").
+- check_availability: Patient is asking if a doctor is available today or asking about doctor presence/timings (e.g., "aaj doctor saab available hai?", "doctor hai kya aaj", "timing kya hai", "kab beth te hain").
+- book_appointment: Patient explicitly wants to schedule a new visit / get a token (e.g., "token do", "appointment book karni hai").
 - check_status: Patient is asking about their token/queue status or current wait
   (e.g. "Status", "Kitna number chal raha hai?", "Mera number kab aayega?",
   "How many people are ahead of me?", "Token kitna chal raha hai").
@@ -143,10 +144,11 @@ Valid intents:
 - unknown: Intent is unclear.
 
 Few-shot Hinglish Examples:
-- "aaj doctor saab available hai?" -> {"intent": "book_appointment", "confidence": 0.95, "entities": {"department": "General Medicine"}}
-- "doctor hai kya aaj" -> {"intent": "book_appointment", "confidence": 0.95, "entities": {"department": "General Medicine"}}
-- "timing kya hai clinic ka" -> {"intent": "ask_faq", "confidence": 0.95, "entities": {}}
-- "fees kitni hai" -> {"intent": "ask_faq", "confidence": 0.95, "entities": {}}
+- "aaj doctor saab available hai?" -> {"intent": "check_availability", "confidence": 0.99, "entities": {}}
+- "doctor hai kya aaj" -> {"intent": "check_availability", "confidence": 0.99, "entities": {}}
+- "timing kya hai clinic ka" -> {"intent": "ask_faq", "confidence": 0.99, "entities": {}}
+- "fees kitni hai" -> {"intent": "ask_faq", "confidence": 0.99, "entities": {}}
+- "appointment book karni hai" -> {"intent": "book_appointment", "confidence": 0.99, "entities": {}}
 
 Respond ONLY with valid JSON:
 { 
@@ -166,7 +168,7 @@ Respond ONLY with valid JSON:
         const completion = await groq.chat.completions.create({
             model: MODELS.fast,
             max_tokens: 300,
-            temperature: DEFAULTS.tempLow,
+            temperature: 0.0,
             response_format: { type: "json_object" },
             messages: [{ role: "user", content: prompt }],
         });
