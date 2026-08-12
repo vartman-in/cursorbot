@@ -659,48 +659,52 @@ router.post('/', async (req, res) => {
         // ==========================================
         // 🛑 EMERGENCY LOOP BYPASS
         // ==========================================
-        if (isEmergency) {
-            responseText = getEmergencyReply();
+        if (isEmergency || safetyScreen.level === 'urgent') {
+            const isEmergencyFlag = isEmergency || safetyScreen.level === 'emergency';
+            responseText = isEmergencyFlag ? getEmergencyReply() : (urgentNotice || 'Namastey sir, aapke symptoms ko qualified clinical review ki zarurat ho sakti hai. Clinic staff ko alert kiya ja raha hai.');
             nextState = 'human_handling';
+            const targetClinicId = clinicData?.clinicId || instanceId;
+
+            // Atomically update patient state and clinicId so dashboard Human Handoff updates instantly
+            await patients.createOrUpdate(chatId, {
+                currentFlowState: nextState,
+                clinicId: targetClinicId,
+                lastQuery: patientMessage,
+                aiNotes: isEmergencyFlag ? 'Medical Emergency Detected' : 'Urgent Symptom Review Requested',
+            });
 
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
             await alertStaff(
                 chatId,
                 patientName,
-                'Medical Emergency Detected',
+                isEmergencyFlag ? 'Medical Emergency Detected' : 'Urgent Symptom Review Requested',
                 transcript,
-                clinicData?.clinicId || instanceId
+                targetClinicId
             );
 
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
-            await patients.updateFlowState(chatId, nextState);
 
             await sendMessage(chatId, responseText);
-            logger.info(`[Webhook] Emergency response sent to ${chatId}. Halted further processing.`);
-            return;
+            logger.info(`[Webhook] Triage safety response sent to ${chatId} (level: ${safetyScreen.level}). Halted further processing.`);
+            return res.status(200).json({ success: true, handled: true, triageLevel: safetyScreen.level });
         }
 
-        // A deliberate handoff request remains available, but a patient asking
-        // when a clinician can see them follows booking instead of being muted.
         if (isExplicitHumanHandoff) {
             responseText = 'Namastey sir, aapka message authorised clinic staff ko forward kar diya gaya hai. Team member aapse yahin reply karega.';
             nextState = 'human_handling';
+            const targetClinicId = clinicData?.clinicId || instanceId;
+            await patients.createOrUpdate(chatId, {
+                currentFlowState: nextState,
+                clinicId: targetClinicId,
+                lastQuery: patientMessage,
+            });
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
-            await alertStaff(chatId, patientName, 'Human handoff requested', transcript, clinicData?.clinicId || instanceId);
-        }
-
-        if (safetyScreen.level === 'urgent') {
-            // Alert staff but continue the operational booking journey. An
-            // urgent classification never authorises medical advice and never
-            // prevents a patient from receiving the earliest valid slot.
-            const availability = getLiveTokenAvailability(clinicData);
-            const nextOpening = availability.nextOpening
-                ? formatIsoDateForPatient(`${availability.nextOpening.year}-${String(availability.nextOpening.month).padStart(2, '0')}-${String(availability.nextOpening.day).padStart(2, '0')}`)
-                : null;
-            urgentNotice = getUrgentReply({ canIssueLiveToken: availability.canIssueLiveToken, nextOpening });
-            const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
-            await alertStaff(chatId, patientName, 'Urgent symptom review requested', transcript, clinicData?.clinicId || instanceId);
+            await alertStaff(chatId, patientName, 'Human handoff requested', transcript, targetClinicId);
+            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+            await sendMessage(chatId, responseText);
+            return res.status(200).json({ success: true, handled: true, handoff: true });
         }
 
         // A quick future-slot offer is a durable conversation state, not merely

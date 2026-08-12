@@ -510,8 +510,8 @@
 
     document.getElementById('staff-login-form').addEventListener('submit', signInStaff);
 
-    // Set Today's Date default
-    document.getElementById('input-queue-date').value = new Date().toISOString().split('T')[0];
+    // Set Today's Date default in IST
+    document.getElementById('input-queue-date').value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
     // Initialize Lucide icons
     lucide.createIcons();

@@ -6,7 +6,7 @@
  */
 const EMERGENCY_PATTERNS = [
     /\b(chest pain|heart attack|severe chest pressure|seene mein tez dard|chhati mein (tez )?dard)\b/i,
-    /\b(difficulty breathing|shortness of breath|cannot breathe|saans (nahi|nahin) aa rahi|saans lene mein (bahut )?dikkat)\b/i,
+    /\b(difficulty breathing|shortness of breath|cannot breathe|saans (nahi|nahin) aa rahi|saans lene mein (bahut |thodi |halki )?dikkat|saans ki takleef)\b/i,
     /\b(severe bleeding|bleeding (won't|wont|not) stop|bahut (zyada )?khoon|khoon (nahi|nahin) ruk raha)\b/i,
     /\b(unconscious|passed out|fainted|behosh|h[oō]sh (nahi|nahin))\b/i,
     /\b(seizure|convulsion|fits aa rahe|daure)\b/i,
@@ -50,7 +50,7 @@ function getEmergencyReply() {
 function getUrgentReply({ canIssueLiveToken, nextOpening } = {}) {
     const bookingGuidance = canIssueLiveToken
         ? 'Clinic abhi open hai. Main aapke liye earliest available consultation arrange karne mein madad kar sakta hu.'
-        : `Clinic abhi closed hai. Main aapke liye future appointment arrange kar sakta hu${nextOpening ? `; next opening ${nextOpening}` : ''}.`;
+        : `Clinic abhi closed hai. Main aapke liye future appointment arrange kar sakta hu${nextOpening ? ` (next opening: ${nextOpening})` : ''}.`;
     return `Namastey sir, aapke symptoms ko qualified clinical review ki zarurat ho sakti hai. Main diagnosis nahi kar sakta. ${bookingGuidance} Agar symptoms severe hon ya emergency signs hon, kripya turant nearest emergency department se sampark karein.`;
 }
 
