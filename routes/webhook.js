@@ -897,7 +897,26 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Check Doctor Availability / Clinic Hours FAQ
+        // Multi-intent Informational Query Handler (e.g. availability + fees)
+        const hasAvailability = classifiedIntents.includes('check_availability') || /\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage);
+        const hasGeneralQuery = classifiedIntents.includes('general_query') || /\b(fees|fee|cost|price|address|pata|kaha|location|direction|contact)\b/i.test(patientMessage);
+        const hasStatusQuery = classifiedIntents.includes('check_status') || looksLikeStatusQuery(patientMessage);
+        const informationalCount = (hasAvailability ? 1 : 0) + (hasGeneralQuery ? 1 : 0) + (hasStatusQuery ? 1 : 0);
+
+        if (informationalCount > 1 && patient.currentFlowState === 'idle') {
+            const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
+            history.push({ role: 'user', content: patientMessage });
+            
+            let combinedTopics = [];
+            if (hasAvailability) combinedTopics.push("doctor availability & clinic timings");
+            if (hasGeneralQuery) combinedTopics.push("general clinic info, fees, or address");
+            if (hasStatusQuery) combinedTopics.push("patient's active queue status");
+
+            const extraContext = `The patient is asking a composite/multi-intent question covering: ${combinedTopics.join(" and ")}. Please answer all parts of their question comprehensively, politely, and accurately in Hinglish using the provided clinic data and strict zero-hallucination guardrails.`;
+            
+            responseText = await generateResponse(history, instanceId, clinicData, extraContext);
+            nextState = patient.currentFlowState;
+        }
         else if (intent === 'check_availability') {
             const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
             history.push({ role: 'user', content: patientMessage });
