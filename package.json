@@ -23,6 +23,7 @@
     "mongoose": "^9.8.0",
     "morgan": "^1.10.0",
     "node-cron": "^3.0.3",
+    "openai": "^7.4.0",
     "razorpay": "^2.9.8",
     "uuid": "^9.0.1",
     "winston": "^3.12.0"

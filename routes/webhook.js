@@ -592,9 +592,10 @@ router.post('/', async (req, res) => {
         // 3. Classify Intent using Groq
         const classification = await classifyIntent(patientMessage, patient.conversationHistory.slice(-3));
         const classifiedIntent = classification.intent || 'unknown';
+        const classifiedIntents = classification.intents || [classifiedIntent];
 
         // Check if user is correcting a mistaken booking or expressing negation ("mene nahi bola", "nahi karni")
-        const isCorrectionOrNegation = classifiedIntent === 'cancel_or_correct' || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
+        const isCorrectionOrNegation = classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
         if (isCorrectionOrNegation) {
             if (liveStatus) {
                 try {
@@ -613,17 +614,21 @@ router.post('/', async (req, res) => {
         }
 
         const requestedAppointmentId = extractAppointmentId(patientMessage);
-        let intent = classifiedIntent;
+        let intent = classifiedIntents[0] || classifiedIntent;
         if (looksLikeStatusQuery(patientMessage)) {
             intent = 'check_status';
         } else if (/\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage)) {
             intent = 'check_availability';
+        } else if (classifiedIntents.includes('human_handoff') || /receptionist|staff|doctor se baat|human/i.test(patientMessage)) {
+            intent = 'human_handoff';
+        } else if (classifiedIntents.includes('confirmation') && patient.currentFlowState === 'awaiting_appointment_date') {
+            intent = 'book_appointment';
         }
 
         if (requestedAppointmentId && isFutureAppointmentChangeRequest(patientMessage)) {
             intent = 'modify_appointment';
         }
-        logger.info(`[Webhook] Classified intent: ${intent} for ${chatId}`);
+        logger.info(`[Webhook] Classified intents: ${JSON.stringify(classifiedIntents)}, primary resolved intent: ${intent} for ${chatId}`);
 
         // 4. Handle based on intent and current state
         nextState = patient.currentFlowState;
@@ -910,6 +915,14 @@ router.post('/', async (req, res) => {
             const liveStatusText = `The patient is asking a general inquiry (address, fees, directions, or contact info). Answer helpfully in polite Hinglish using clinic details.`;
             responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
             nextState = patient.currentFlowState;
+        }
+
+        // Human Handoff / Talk to Receptionist
+        else if (intent === 'human_handoff') {
+            responseText = 'Namastey sir/ma' + 'am, aapka message authorised clinic staff ko forward kar diya gaya hai. Team member aapse yahin jaldi reply karega.';
+            nextState = 'human_handling';
+            const transcript = (patient.conversationHistory || []).slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+            await alertStaff(chatId, patientName, 'Patient requested human receptionist', transcript, clinicData?.clinicId || instanceId);
         }
 
         // Real-Time Status Query

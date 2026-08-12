@@ -1,122 +1,66 @@
+// services/features/aiIntegration.js
 "use strict";
 
-const Groq = require("groq-sdk");
-const { logger } = require("../../errorHandler");
-const { tenants } = require("../databaseService");
-const { CLINIC_RECEPTIONIST_PROMPT, buildClinicContext } = require("./clinicPrompt");
+const { OpenAI } = require("openai");
+const logger = require("../../utils/logger");
 
-const apiKey = process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
-if (!apiKey) {
-    console.warn("⚠️ WARNING: GROQ_API_KEY or OPENAI_API_KEY is missing. AI features will use a fallback key and may fail if called.");
-}
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "dummy-key-for-proxy";
+const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.groq.com/openai/v1";
 
-const groq = new Groq({ apiKey: apiKey || "dummy_key_to_prevent_crash" });
+const groq = new OpenAI({
+    apiKey: OPENAI_API_KEY,
+    baseURL: OPENAI_API_BASE,
+});
 
 const MODELS = {
-    chat: "llama-3.3-70b-versatile",
     fast: "llama-3.1-8b-instant",
-};
-
-const DEFAULTS = {
-    maxTokensChat: 1024,
-    maxTokensFast: 256,
-    temperature: 0.7,
-    tempLow: 0.1,
+    smart: "llama-3.3-70b-versatile"
 };
 
 /**
- * Generate a conversational response for the AI Receptionist.
- * Dynamically loads clinic context either from passed clinicData or from Firestore using tenantId (Instance ID).
+ * Generate a conversational response using Groq LLM with system prompt.
  */
-async function generateResponse(messages, tenantId = null, clinicDataOrOptions = {}, liveStatusText = null) {
-    let clinicData = null;
-    let options = {};
-
-    // Intelligently handle whether the 3rd argument is clinicData or options object
-    if (clinicDataOrOptions && (clinicDataOrOptions.profile || clinicDataOrOptions.doctors || clinicDataOrOptions.services || clinicDataOrOptions.clinicName)) {
-        clinicData = clinicDataOrOptions;
-    } else {
-        options = clinicDataOrOptions || {};
-    }
-
-    const {
-        model = MODELS.chat,
-        maxTokens = DEFAULTS.maxTokensChat,
-        temperature = DEFAULTS.temperature,
-    } = options;
-
-    let clinicContext = "No specific clinic context provided.";
-
-    // 1. Use passed clinicData directly if available from the webhook
-    if (clinicData) {
-        try {
-            clinicContext = buildClinicContext(clinicData);
-        } catch (err) {
-            logger.warn(`[Groq] Could not build clinic context from passed data: ${err.message}`);
-        }
-    } 
-    // 2. Otherwise, fallback to fetching tenant data from Firestore
-    else if (tenantId) {
-        try {
-            const tenantData = await tenants.getByInstanceId(tenantId);
-            if (tenantData) {
-                clinicContext = buildClinicContext(tenantData);
-            } else {
-                logger.warn(`[Groq] No tenant data found in Firestore for instance_id: ${tenantId}`);
-            }
-        } catch (err) {
-            logger.warn(`[Groq] Could not load tenant data from Firestore: ${err.message}`);
-        }
-    }
-
-    const systemPrompt = CLINIC_RECEPTIONIST_PROMPT.replace("{{context}}", clinicContext) +
-        (liveStatusText ? `\n\n=== LIVE APPOINTMENT STATUS (authoritative — overrides any conflicting detail elsewhere in this conversation) ===\n${liveStatusText}` : '');
-
-    // Sanitize all message content to ensure it is a string to prevent dropped history
-    const sanitizedMessages = messages.map((m) => {
-        if (typeof m.content === "string") return m;
-
-        let coerced = "";
-        if (m.content && typeof m.content === "object") {
-            coerced = typeof m.content.reply === "string" ? m.content.reply :
-                      typeof m.content.response === "string" ? m.content.response :
-                      JSON.stringify(m.content);
-        } else {
-            coerced = String(m.content ?? "");
-        }
-
-        return { ...m, content: coerced };
-    });
-
+async function generateResponse(history, instanceId, clinicData, extraContext = "") {
     try {
-        logger.info(`[Groq] Calling generateResponse with model: ${model}`);
+        const { CLINIC_RECEPTIONIST_PROMPT, buildClinicContext } = require("./clinicPrompt");
+        const clinicContextStr = buildClinicContext(clinicData);
+
+        let systemPrompt = CLINIC_RECEPTIONIST_PROMPT.replace("{{context}}", clinicContextStr);
+        if (extraContext) {
+            systemPrompt += `\n\nAdditional Real-time Context:\n${extraContext}`;
+        }
+
+        const formattedMessages = [
+            { role: "system", content: systemPrompt },
+            ...history.map(m => ({
+                role: m.role === "assistant" ? "assistant" : "user",
+                content: typeof m.content === "string" ? m.content : JSON.stringify(m.content)
+            }))
+        ];
+
+        logger.info(`[Groq] Calling generateResponse with model: ${MODELS.smart}`);
         const completion = await groq.chat.completions.create({
-            model,
-            max_tokens: maxTokens,
-            temperature,
-            messages: [
-                { role: "system", content: systemPrompt },
-                ...sanitizedMessages,
-            ],
+            model: MODELS.smart,
+            messages: formattedMessages,
+            temperature: 0.3,
+            max_tokens: 500
         });
 
-        const text = completion.choices?.[0]?.message?.content?.trim();
-        if (!text) throw new Error("Groq returned an empty response.");
-
-        logger.info(`[Groq] generateResponse success. Model: ${model}`);
-        return text;
+        const reply = completion.choices?.[0]?.message?.content?.trim() || "Namastey sir/ma'am, kripya apni query dobara bhejein.";
+        logger.info(`[Groq] generateResponse success. Reply length: ${reply.length}`);
+        return reply;
     } catch (err) {
-        logger.error(`[Groq] generateResponse failed: ${err.message}`);
-        return "I'm sorry, I'm having trouble processing your request right now. Please try again later or call our clinic directly.";
+        logger.error(`[Groq] generateResponse error: ${err.message}`);
+        return "Namastey sir/ma'am, clinic reception temporarily busy hai. Kripya thodi der mein message bhejein.";
     }
 }
 
 /**
- * Classify the intent of an incoming patient message.
+ * Classify the intent of an incoming patient message, supporting multi-intent arrays and contextual confirmation.
  */
 async function classifyIntent(message, history = []) {
     const historyBlock = history.length
-        ? `Recent conversation:\n${history.map(m => {
+        ? `Recent conversation context (pay attention to what the bot just asked):\n${history.map(m => {
             const contentStr = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
             return `${m.role}: ${contentStr}`;
           }).join("\n")}\n\n`
@@ -125,29 +69,29 @@ async function classifyIntent(message, history = []) {
     const prompt = `
 ${historyBlock}
 You are an intent classification engine for a medical clinic's virtual receptionist. 
-Your ONLY job is to analyze the user's message and output a strict JSON object containing the correct intent.
+Analyze the user's message and recent conversation history, and output a strict JSON object containing an array of identified intents.
 
 Categories of Intent:
-
 1. "check_availability": User is asking about clinic timings, if the clinic is open, or when the doctor sits.
 2. "book_appointment": User is explicitly asking to book, schedule, or get a token.
 3. "check_status": User is asking about their queue number, wait time, or active token.
 4. "general_query": User is asking for address, fees, directions, or contact info.
 5. "cancel_or_correct": User is frustrated, says they didn't mean to book, or wants to cancel.
+6. "confirmation": User is saying yes, okay, "haan kar do", "thik hai", or confirming a previous question/proposal by the bot.
+7. "human_handoff": User is asking to speak with a human receptionist, staff, or doctor ("receptionist se baat karni hai").
 
-Examples for mapping (pay close attention to Hinglish):
-
-- "aaj doctor saab available hai?" -> "check_availability"
-- "doctor kab beth te hai" -> "check_availability"
-- "number laga do" -> "book_appointment"
-- "mera token status kya hai" -> "check_status"
-- "arey bhai mene booking karne ko bola hi nahi hai" -> "cancel_or_correct"
+Examples for mapping (pay close attention to Hinglish & context):
+- "aaj doctor saab available hai?" -> ["check_availability"]
+- "doctor kab beth te hai aur fees kitni hai?" -> ["check_availability", "general_query"]
+- "haan kar do" (when bot asked to book) -> ["confirmation"]
+- "mujhe receptionist se baat karni hai" -> ["human_handoff"]
+- "arey bhai mene booking karne ko bola hi nahi hai" -> ["cancel_or_correct"]
 
 User message: "${message}"
 
 Return ONLY valid JSON in this exact format, with no markdown formatting or extra text:
 {
-  "intent": "identified_intent_here"
+  "intents": ["intent_1", "intent_2"]
 }`;
 
     try {
@@ -163,11 +107,13 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or extr
         const raw = completion.choices?.[0]?.message?.content?.trim() || "";
         const objMatch = raw.match(/\{.*\}/s);
         const result = JSON.parse(objMatch ? objMatch[0] : raw);
-        logger.info(`[Groq] classifyIntent success. Intent: ${result.intent}`);
-        return result;
+        // Ensure backwards compatibility with single intent format if model returns string
+        let intentsArray = result.intents || (result.intent ? [result.intent] : ["unknown"]);
+        logger.info(`[Groq] classifyIntent success. Intents: ${JSON.stringify(intentsArray)}`);
+        return { intents: intentsArray, intent: intentsArray[0] };
     } catch (err) {
         logger.warn(`[Groq] classifyIntent fallback: ${err.message}`);
-        return { intent: "unknown", confidence: 0, entities: {} };
+        return { intents: ["unknown"], intent: "unknown", confidence: 0, entities: {} };
     }
 }
 
