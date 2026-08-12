@@ -4,12 +4,16 @@
 const { OpenAI } = require("openai");
 const logger = require("../../utils/logger");
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || "dummy-key-for-proxy";
-let OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.groq.com/openai/v1";
+// Prioritize GROQ_API_KEY if we are hitting a Groq endpoint
+const IS_GROQ_BASE = (process.env.OPENAI_API_BASE || "").includes("groq.com") || !process.env.OPENAI_API_BASE;
+const OPENAI_API_KEY = (IS_GROQ_BASE && process.env.GROQ_API_KEY) 
+    ? process.env.GROQ_API_KEY 
+    : (process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY || "dummy-key-for-proxy");
 
-// Auto-detect if user provided an OpenAI key but is hitting Groq endpoint
-if (OPENAI_API_KEY.startsWith('sk-') && OPENAI_API_BASE.includes('groq.com')) {
-    logger.warn("[Groq] Detected OpenAI-style key with Groq base URL. If this is not a Groq key, it will fail with 401. Consider setting OPENAI_API_BASE to https://api.openai.com/v1");
+const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.groq.com/openai/v1";
+
+if (IS_GROQ_BASE) {
+    logger.info(`[AI] Initializing with Groq-priority logic. Using key starting with: ${OPENAI_API_KEY.substring(0, 7)}...`);
 }
 
 const groq = new OpenAI({
