@@ -86,3 +86,93 @@ module.exports = {
     sendMediaByUrl,
     sendMessage
 };
+
+/**
+ * Sends interactive buttons via Green API.
+ */
+async function sendButtons(chatId, message, buttons, footer = "City Health Clinic") {
+    const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendButtons/${GREEN_API_API_TOKEN_INSTANCE}`;
+    
+    // Format buttons for Green API spec
+    const formattedButtons = buttons.map((btn, index) => ({
+        buttonId: btn.id || String(index + 1),
+        buttonText: {
+            displayText: btn.text
+        }
+    }));
+
+    const payload = {
+        chatId: chatId,
+        message: message,
+        buttons: formattedButtons,
+        footer: footer
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            console.warn(`[Green API] sendButtons failed (${response.status}), falling back to text message.`);
+            return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
+        }
+
+        const data = await response.json();
+        console.log("[GreenAPI] Buttons Response:", data);
+        return data;
+    } catch (error) {
+        console.error("[Green API] Error in sendButtons:", error.message);
+        // Fallback to text message
+        return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
+    }
+}
+
+/**
+ * Sends a list message (dropdown/menu) via Green API.
+ */
+async function sendListMessage(chatId, message, title, buttonText, sections, footer = "City Health Clinic") {
+    const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendListMessage/${GREEN_API_API_TOKEN_INSTANCE}`;
+
+    const payload = {
+        chatId: chatId,
+        message: message,
+        title: title,
+        buttonText: buttonText,
+        sections: sections,
+        footer: footer
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            console.warn(`[Green API] sendListMessage failed (${response.status}), falling back to text message.`);
+            let fallbackText = `${message}\n\n${title}:\n`;
+            sections.forEach(sec => {
+                fallbackText += `*${sec.title}*\n`;
+                sec.rows.forEach(r => {
+                    fallbackText += `- ${r.title}${r.description ? ` (${r.description})` : ''}\n`;
+                });
+            });
+            return await sendMessage(chatId, fallbackText);
+        }
+
+        const data = await response.json();
+        console.log("[GreenAPI] ListMessage Response:", data);
+        return data;
+    } catch (error) {
+        console.error("[Green API] Error in sendListMessage:", error.message);
+        return await sendMessage(chatId, message);
+    }
+}
+
+// Export new methods
+module.exports.sendButtons = sendButtons;
+module.exports.sendListMessage = sendListMessage;
