@@ -124,43 +124,30 @@ async function classifyIntent(message, history = []) {
 
     const prompt = `
 ${historyBlock}
-Classify the patient message for a clinic AI Receptionist.
+You are an intent classification engine for a medical clinic's virtual receptionist. 
+Your ONLY job is to analyze the user's message and output a strict JSON object containing the correct intent.
 
-Patient message: "${message}"
+Categories of Intent:
 
-Valid intents:
-- check_availability: Patient is asking if a doctor is available today or asking about doctor presence/timings (e.g., "aaj doctor saab available hai?", "doctor hai kya aaj", "timing kya hai", "kab beth te hain").
-- book_appointment: Patient explicitly wants to schedule a new visit / get a token (e.g., "token do", "appointment book karni hai").
-- check_status: Patient is asking about their token/queue status or current wait
-  (e.g. "Status", "Kitna number chal raha hai?", "Mera number kab aayega?",
-  "How many people are ahead of me?", "Token kitna chal raha hai").
-- cancel_appointment: Patient wants to cancel an existing visit.
-- modify_appointment: Patient wants to change an existing visit.
-- ask_faq: Patient has a question about clinic hours, location, services, fees, reports, etc.
-- triage: Patient is describing symptoms or asking for medical advice.
-- human_handoff: Patient explicitly asks for a human or describes an emergency.
-- greeting: Simple greeting.
-- farewell: Simple farewell.
-- unknown: Intent is unclear.
+1. "check_availability": User is asking about clinic timings, if the clinic is open, or when the doctor sits.
+2. "book_appointment": User is explicitly asking to book, schedule, or get a token.
+3. "check_status": User is asking about their queue number, wait time, or active token.
+4. "general_query": User is asking for address, fees, directions, or contact info.
+5. "cancel_or_correct": User is frustrated, says they didn't mean to book, or wants to cancel.
 
-Few-shot Hinglish Examples:
-- "aaj doctor saab available hai?" -> {"intent": "check_availability", "confidence": 0.99, "entities": {}}
-- "doctor hai kya aaj" -> {"intent": "check_availability", "confidence": 0.99, "entities": {}}
-- "timing kya hai clinic ka" -> {"intent": "ask_faq", "confidence": 0.99, "entities": {}}
-- "fees kitni hai" -> {"intent": "ask_faq", "confidence": 0.99, "entities": {}}
-- "appointment book karni hai" -> {"intent": "book_appointment", "confidence": 0.99, "entities": {}}
+Examples for mapping (pay close attention to Hinglish):
 
-Respond ONLY with valid JSON:
-{ 
-  "intent": "<intent>", 
-  "confidence": <0.0-1.0>, 
-  "entities": { 
-    "department": null, 
-    "doctor": null, 
-    "date": null, 
-    "time": null,
-    "symptoms": []
-  } 
+- "aaj doctor saab available hai?" -> "check_availability"
+- "doctor kab beth te hai" -> "check_availability"
+- "number laga do" -> "book_appointment"
+- "mera token status kya hai" -> "check_status"
+- "arey bhai mene booking karne ko bola hi nahi hai" -> "cancel_or_correct"
+
+User message: "${message}"
+
+Return ONLY valid JSON in this exact format, with no markdown formatting or extra text:
+{
+  "intent": "identified_intent_here"
 }`;
 
     try {

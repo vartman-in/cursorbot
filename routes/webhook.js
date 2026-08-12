@@ -585,14 +585,17 @@ router.post('/', async (req, res) => {
             patient.clinicId = resolvedClinicIdForPatient;
         }
 
+        const clinicId = clinicData?.clinicId || null;
+        const liveStatus = clinicId ? await queueService.getPatientStatus(chatId) : null;
+        const entities = {};
+
         // 3. Classify Intent using Groq
         const classification = await classifyIntent(patientMessage, patient.conversationHistory.slice(-3));
-        const { intent: classifiedIntent, entities } = classification;
+        const classifiedIntent = classification.intent || 'unknown';
 
         // Check if user is correcting a mistaken booking or expressing negation ("mene nahi bola", "nahi karni")
-        const isCorrectionOrNegation = /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
+        const isCorrectionOrNegation = classifiedIntent === 'cancel_or_correct' || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
         if (isCorrectionOrNegation) {
-            // If they have an active token or pending offer, cancel/reset it gracefully and apologize
             if (liveStatus) {
                 try {
                     await PatientService.handlePatientAction({ chatId, action: 'cancel', reason: 'Patient correction: ' + patientMessage });
@@ -609,10 +612,6 @@ router.post('/', async (req, res) => {
             return;
         }
 
-        // A patient asking when a clinician is available must continue into the
-        // appointment workflow even if a probabilistic classifier labels the
-        // symptom text as a generic handoff. Deterministic emergency screening
-        // below still has absolute priority.
         const requestedAppointmentId = extractAppointmentId(patientMessage);
         let intent = classifiedIntent;
         if (looksLikeStatusQuery(patientMessage)) {
@@ -623,19 +622,11 @@ router.post('/', async (req, res) => {
 
         if (requestedAppointmentId && isFutureAppointmentChangeRequest(patientMessage)) {
             intent = 'modify_appointment';
-        } else if (wantsClinicalAppointment(patientMessage) && ['human_handoff', 'medical_advice', 'symptom_inquiry', 'general_inquiry'].includes(intent)) {
-            intent = 'book_appointment';
         }
         logger.info(`[Webhook] Classified intent: ${intent} for ${chatId}`);
 
         // 4. Handle based on intent and current state
         nextState = patient.currentFlowState;
-
-        // Fetch the patient's real, live token status ONCE — reused by every
-        // branch below instead of each one independently guessing or (worse)
-        // letting the LLM free-associate appointment details from memory.
-        const clinicId = clinicData?.clinicId || null;
-        const liveStatus = clinicId ? await queueService.getPatientStatus(chatId) : null;
 
         // Deterministic safety screen runs in parallel with LLM classification.
         // The classifier may assist, but it never has authority to suppress a
@@ -908,6 +899,15 @@ router.post('/', async (req, res) => {
             const liveStatusText = liveStatus
                 ? `Note: The patient currently has Token #${liveStatus.tokenNumber} for ${liveStatus.department} today, but they are asking about availability/timings. Answer their availability question first in polite Hinglish based on the clinic context, and gently remind them of their active token if relevant.`
                 : `The patient is asking about doctor availability or clinic timings. Answer directly in polite Hinglish using the clinic details.`;
+            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
+            nextState = patient.currentFlowState;
+        }
+
+        // General Query (address, fees, directions, contact info)
+        else if (intent === 'general_query') {
+            const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
+            history.push({ role: 'user', content: patientMessage });
+            const liveStatusText = `The patient is asking a general inquiry (address, fees, directions, or contact info). Answer helpfully in polite Hinglish using clinic details.`;
             responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
             nextState = patient.currentFlowState;
         }
