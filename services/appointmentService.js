@@ -140,7 +140,20 @@ async function getAvailableSlots({ clinicId, clinicData, department, date, docto
         }
     });
 
-    return candidateSlots.filter((time) => Number(bookedCounts.get(time) || 0) < capacity);
+    // Filter by capacity AND ensure the slot is in the future if the date is today
+    const now = Date.now();
+    return candidateSlots.filter((time) => {
+        // 1. Check capacity
+        if (Number(bookedCounts.get(time) || 0) >= capacity) return false;
+        
+        // 2. Check if time is in the future for today's appointments
+        if (date === new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date())) {
+            const slotDateTime = buildIstDateTime(date, time);
+            if (slotDateTime.getTime() <= now) return false;
+        }
+        
+        return true;
+    });
 }
 
 async function getNextAvailableDates({ clinicData = {}, fromDate, days = 14 }) {
