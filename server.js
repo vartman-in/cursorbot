@@ -91,6 +91,10 @@ app.get('/health', async (req, res) => {
         status: healthy ? 'ok' : 'degraded',
         service: 'clinic-ai-receptionist',
         version,
+        release: {
+            gitCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown',
+            gitBranch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || 'unknown',
+        },
         uptimeSeconds: Math.floor(process.uptime()),
         timestamp: new Date().toISOString(),
         requestId: req.requestId,
