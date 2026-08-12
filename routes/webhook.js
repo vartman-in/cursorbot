@@ -187,7 +187,12 @@ function appointmentDatePrompt(nextOpening) {
 }
 
 function wantsClinicalAppointment(message) {
-    return /\b(appointment|book|booking|consultation|consult|doctor|dikhana|milna|milenge|kab milega|kab milenge)\b/i.test(String(message || ''));
+    const lower = String(message || '').toLowerCase();
+    // Queries about timing, availability, fees, or location are NOT booking intents
+    if (/(timing|time|timing kya|kab (khulta|band|aate|beth|baith|milte|milenge)|fees|address|kahan|charges|price|kitna)/i.test(lower)) {
+        return false;
+    }
+    return /\b(appointment|book|booking|consultation|consult|slot|token chahiye|appointment book|dikhana hai|milna hai)\b/i.test(lower);
 }
 
 function isAffirmative(message) {

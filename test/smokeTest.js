@@ -101,7 +101,8 @@ async function run() {
     same(webhookTest.parseAppointmentTime('10 baje', ['09:00', '10:00', '14:00']), '10:00', 'Hinglish hour input resolves to a displayed slot');
     same(webhookTest.parseAppointmentTime('2 baje', ['09:00', '10:00', '14:00']), '14:00', 'ambiguous hour prefers the displayed afternoon slot');
     verify(webhookTest.appointmentDatePrompt({ year: 2026, month: 8, day: 12 }).includes('12 August'), 'closed-hours prompt displays a human-readable next opening');
-    verify(webhookTest.wantsClinicalAppointment('Fever hai, doctor kab milenge?'), 'symptom message asking for doctor availability is recognised as a booking request');
+    verify(!webhookTest.wantsClinicalAppointment('Fever hai, doctor kab milenge?'), 'doctor availability query is treated as an inquiry rather than forced booking');
+    verify(webhookTest.wantsClinicalAppointment('Mujhe appointment book karni hai'), 'explicit appointment request is recognised as a booking request');
     verify(webhookTest.wantsEarliestAvailableAppointment('Doctor kab milenge?'), 'doctor-availability question requests the earliest offered slot');
     same(webhookTest.parseAppointmentDate('I want a future appointment for 13 August 2026'), '2026-08-13', 'future date is correctly extracted from complex sentence');
 
