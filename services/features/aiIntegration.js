@@ -89,14 +89,16 @@ Categories of Intent:
 3. "check_status": User is asking about their queue number, wait time, or active token.
 4. "general_query": User is asking for address, fees, directions, or contact info.
 5. "cancel_or_correct": User is frustrated, says they didn't mean to book, or wants to cancel.
-6. "confirmation": User is saying yes, okay, "haan kar do", "thik hai", or confirming a previous question/proposal by the bot.
-7. "human_handoff": User is asking to speak with a human receptionist, staff, or doctor ("receptionist se baat karni hai").
+6. "medical_query": User is asking about symptoms, medicines, test preparation (fasting, drinking water/coffee before tests), or lab instructions.
+7. "confirmation": User is saying yes, okay, "haan kar do", "thik hai", or confirming a previous question/proposal by the bot.
+8. "human_handoff": User is asking to speak with a human receptionist, staff, or doctor ("receptionist se baat karni hai").
 
 Examples for mapping (pay close attention to Hinglish & context):
 - "aaj doctor saab available hai?" -> ["check_availability"]
 - "doctor kab beth te hai aur fees kitni hai?" -> ["check_availability", "general_query"]
 - "haan kar do" (when bot asked to book) -> ["confirmation"]
 - "mujhe receptionist se baat karni hai" -> ["human_handoff"]
+- "Mera subah fasting blood sugar test hai, kya coffee pi sakti hu? Agar nahi, toh token cancel kar do" -> ["medical_query", "cancel_or_correct"]
 - "arey bhai mene booking karne ko bola hi nahi hai" -> ["cancel_or_correct"]
 
 User message: "${message}"

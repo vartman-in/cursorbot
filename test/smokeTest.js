@@ -143,9 +143,20 @@ async function run() {
     same(appointments.getSlotsForDate({ clinicData: schedulingClinic, department: 'General Medicine', date: '2026-01-26' }), [], 'clinic holiday has no future appointment slots');
     mustThrow(() => appointments.getSlotsForDate({ clinicData: schedulingClinic, department: 'General Medicine', date: 'invalid' }), /valid appointment date/, 'invalid appointment date is rejected');
     same(appointments.displaySlot('14:05'), '2:05 PM', 'slot displays in patient-friendly time');
-    await mustReject(() => appointments.bookFutureAppointment({ clinicId: 'clinic-01', patientId: 'patient-01', department: 'General Medicine', date: '2020-01-01', time: '09:00' }), /Appointment database is unavailable/, 'booking safely fails while database is unavailable');
-    await mustReject(() => appointments.getFutureAppointmentForPatient({ appointmentId: 'DlVf3V1TGquEHDFatEiF', patientId: 'patient-01', clinicId: 'clinic-01' }), /Appointment database is unavailable/, 'future appointment lookup fails closed while database is unavailable');
-    await mustReject(() => appointments.rescheduleFutureAppointment({ appointmentId: 'DlVf3V1TGquEHDFatEiF', patientId: 'patient-01', clinicId: 'clinic-01', clinicData: schedulingClinic, date: '2026-01-05', time: '09:00' }), /Appointment database is unavailable/, 'rescheduling safely fails closed while database is unavailable');
+    const prevForceNull = process.env.FORCE_NULL_DB;
+    process.env.FORCE_NULL_DB = 'true';
+    delete require.cache[require.resolve('../db')];
+    delete require.cache[require.resolve('../services/appointmentService')];
+    const appointmentsNull = require('../services/appointmentService');
+    try {
+        await mustReject(() => appointmentsNull.bookFutureAppointment({ clinicId: 'clinic-01', patientId: 'patient-01', department: 'General Medicine', date: '2020-01-01', time: '09:00' }), /Appointment database is unavailable/, 'booking safely fails while database is unavailable');
+        await mustReject(() => appointmentsNull.getFutureAppointmentForPatient({ appointmentId: 'DlVf3V1TGquEHDFatEiF', patientId: 'patient-01', clinicId: 'clinic-01' }), /Appointment database is unavailable/, 'future appointment lookup fails closed while database is unavailable');
+        await mustReject(() => appointmentsNull.rescheduleFutureAppointment({ appointmentId: 'DlVf3V1TGquEHDFatEiF', patientId: 'patient-01', clinicId: 'clinic-01', clinicData: schedulingClinic, date: '2026-01-05', time: '09:00' }), /Appointment database is unavailable/, 'rescheduling safely fails closed while database is unavailable');
+    } finally {
+        if (prevForceNull === undefined) delete process.env.FORCE_NULL_DB; else process.env.FORCE_NULL_DB = prevForceNull;
+        delete require.cache[require.resolve('../db')];
+        delete require.cache[require.resolve('../services/appointmentService')];
+    }
 
     console.log('\n── 9. Staff authentication and tenant scoping ──');
     const previousJwt = process.env.JWT_SECRET;

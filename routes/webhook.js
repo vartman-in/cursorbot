@@ -607,8 +607,34 @@ router.post('/', async (req, res) => {
             return;
         }
 
-        // Check if user is correcting a mistaken booking or expressing negation ("mene nahi bola", "nahi karni")
-        const isCorrectionOrNegation = classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage);
+        // Check if message contains a medical query (e.g. fasting, test prep, coffee/water before test)
+        const hasMedicalQuery = classifiedIntents.includes('medical_query') || /\b(fasting|sugar test|lipid|coffee|paani|pani|water|test se pehle|khana|diet)\b/i.test(patientMessage);
+        const isCorrectionOrNegation = !hasMedicalQuery && (classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage));
+        
+        if (hasMedicalQuery) {
+            // Safe-Fail Priority: Medical/test-prep queries override destructive cancellation actions.
+            // Route to human handoff or provide safe guidance without executing cancellation.
+            const targetClinicId = clinicData?.clinicId || instanceId;
+            responseText = `Namastey sir/ma'am, test preparation ya medical advice ke baare mein chat par decide nahi kiya ja sakta. Main aapko clinic staff se connect kar raha hu taaki aapke test aur token ko properly coordinate kiya ja sake.`;
+            nextState = 'human_handling';
+            
+            await patients.createOrUpdate(chatId, {
+                currentFlowState: nextState,
+                clinicId: targetClinicId,
+                lastQuery: patientMessage,
+                aiNotes: 'Medical/Test Prep Query mixed with cancellation request - Halted auto-cancel',
+            });
+            
+            const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+            await alertStaff(chatId, patientName, 'Medical Query / Test Prep Review Requested', transcript, targetClinicId);
+            
+            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+            await sendMessage(chatId, responseText);
+            logger.info(`[Webhook] Safe-Fail triggered for medical query mixed with cancellation. Halted destructive cancellation for ${chatId}.`);
+            return res.status(200).json({ success: true, handled: true, safeFail: 'medical_query' });
+        }
+
         if (isCorrectionOrNegation) {
             if (liveStatus) {
                 try {
@@ -617,12 +643,12 @@ router.post('/', async (req, res) => {
                     // Ignore if already inactive
                 }
             }
-            const apologyText = `Namastey sir/ma'am, mujhe khed hai agar mujhse koi galatfahmi hui ho. Maine aapki booking/token request cancel kar di hai. Kripya batayein, main aapki kis prakar sahayta kar sakta hu (jaise clinic timings ya doctor availability)?`;
+            const cancellationText = `Namastey sir/ma'am, aapki booking/token request cancel kar di gayi hai. Kripya batayein, main aapki kis prakar sahayta kar sakta hu (jaise clinic timings ya doctor availability)?`;
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
-            await patients.addMessageToHistory(chatId, { role: 'assistant', content: apologyText });
+            await patients.addMessageToHistory(chatId, { role: 'assistant', content: cancellationText });
             await patients.updateFlowState(chatId, 'idle');
             await patients.createOrUpdate(chatId, { pendingAppointmentOffer: null, bookingDetails: null });
-            await sendMessage(chatId, apologyText);
+            await sendMessage(chatId, cancellationText);
             return;
         }
 
