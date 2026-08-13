@@ -136,12 +136,22 @@ async function sendButtons(chatId, message, buttons, footer = "City Health Clini
 async function sendListMessage(chatId, message, title, buttonText, sections, footer = "City Health Clinic") {
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendListMessage/${GREEN_API_API_TOKEN_INSTANCE}`;
 
+    // Ensure sections and rows follow Green API's expected structure
+    const formattedSections = (sections || []).map(section => ({
+        title: section.title,
+        rows: (section.rows || []).map(row => ({
+            rowId: row.rowId || row.id,
+            title: row.title,
+            description: row.description || ""
+        }))
+    }));
+
     const payload = {
         chatId: chatId,
         message: message,
         title: title,
         buttonText: buttonText,
-        sections: sections,
+        sections: formattedSections,
         footer: footer
     };
 

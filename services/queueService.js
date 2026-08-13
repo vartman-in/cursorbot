@@ -99,6 +99,7 @@ async function issueToken(clinicId, department, date = todayISO(), patientInfo =
                 phone: patientInfo.phone || null,
                 status: 'waiting',
                 reason: patientInfo.reason || '',
+                doctorName: patientInfo.doctorName || null,
                 doctorNotes: '',
                 prescriptions: '',
                 feeAmount: 0,
@@ -303,10 +304,10 @@ function estimateWait(queueState, tokenNumber) {
  * Book a token for a patient: issues the next token (creating its queueList
  * entry atomically), and mirrors it onto the patient's own record.
  */
-async function bookToken({ clinicId, chatId, patientName, phone, department, reason }) {
+async function bookToken({ clinicId, chatId, patientName, phone, department, reason, doctorName = null }) {
     const date = todayISO();
     const { tokenNumber, queueState } = await issueToken(clinicId, department, date, {
-        chatId, patientName, phone, reason,
+        chatId, patientName, phone, reason, doctorName,
     });
 
     await patients.createOrUpdate(chatId, {
@@ -316,6 +317,7 @@ async function bookToken({ clinicId, chatId, patientName, phone, department, rea
             department,
             date,
             tokenNumber,
+            doctorName,
             status: 'waiting',
         },
     });

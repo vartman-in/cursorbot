@@ -136,7 +136,10 @@ function parseAppointmentDate(message, now = new Date()) {
 }
 
 function parseAppointmentTime(message, availableSlots = []) {
-    const input = String(message || '').trim().toLowerCase();
+    const cleanMessage = String(message || '').trim().toLowerCase().replace(/^slot_/, '');
+    if (availableSlots.includes(cleanMessage)) return cleanMessage;
+
+    const input = cleanMessage;
     const match = input.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|baje)?\b/);
     if (!match) return null;
 
@@ -178,9 +181,23 @@ function parseLatestAppointmentTime(message, availableSlots = []) {
 
 function formatIsoDateForPatient(isoDate) {
     if (!isoDate) return null;
+    const today = istDateIso();
+    const tomorrow = addDaysIso(today, 1);
+    
+    let prefix = '';
+    if (isoDate === today) prefix = 'Aaj ';
+    else if (isoDate === tomorrow) prefix = 'Kal ';
+    
     const [year, month, day] = isoDate.split('-').map(Number);
-    return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long', year: 'numeric' })
-        .format(new Date(Date.UTC(year, month - 1, day)));
+    const dateObj = new Date(Date.UTC(year, month - 1, day));
+    const formatted = new Intl.DateTimeFormat('en-IN', { 
+        timeZone: 'Asia/Kolkata', 
+        weekday: 'long',
+        day: 'numeric', 
+        month: 'long'
+    }).format(dateObj);
+    
+    return `${prefix}(${formatted})`;
 }
 
 function appointmentDatePrompt(nextOpening) {
@@ -200,7 +217,9 @@ function wantsClinicalAppointment(message) {
 }
 
 function isAffirmative(message) {
-    return /^\s*(yes|y|haan|ha|han|ji|theek hai|thik hai|book|book karo|kar do)\s*[.!]?\s*$/i.test(String(message || ''));
+    const input = String(message || '').trim().toLowerCase();
+    if (input === 'confirm_yes') return true;
+    return /^\s*(yes|y|haan|ha|han|ji|theek hai|thik hai|book|book karo|kar do)\s*[.!]?\s*$/i.test(input);
 }
 
 // Only clear a scheduling flow for an unambiguous cancellation command. Hindi
@@ -208,6 +227,7 @@ function isAffirmative(message) {
 // never silently cancel a pending appointment.
 function isExplicitAppointmentCancellation(message) {
     const input = String(message || '').trim().toLowerCase().replace(/[.!]/g, '');
+    if (input === 'confirm_no') return true;
     return /^(cancel|cancel appointment|cancel booking|booking cancel(?: karo)?|appointment cancel(?: karo)?|mujhe cancel karna hai|nahi chahiye)$/.test(input);
 }
 
@@ -461,8 +481,16 @@ router.post('/', async (req, res) => {
 
         const chatId = body.senderData.chatId;
         const senderPhone = body.senderData.sender;
-        const patientMessage = body.messageData.textMessageData?.textMessage || 
-                               body.messageData.extendedTextMessageData?.text || "";
+        const messageData = body.messageData || {};
+        const patientMessage = 
+            messageData.textMessageData?.textMessage || 
+            messageData.extendedTextMessageData?.text || 
+            messageData.buttonsResponseMessageData?.selectedButtonId ||
+            messageData.buttonsResponseMessageData?.selectedButtonText ||
+            messageData.listResponseMessageData?.selectedRowId ||
+            messageData.listResponseMessageData?.title ||
+            messageData.fileMessageData?.caption ||
+            "";
 
         // 🚀 EXTRACT THE INSTANCE ID FOR THE MULTI-TENANT CONTEXT
         const instanceId = body.instanceData?.idInstance;
@@ -607,9 +635,13 @@ router.post('/', async (req, res) => {
             return;
         }
 
-        // Check if message contains a medical query (e.g. fasting, test prep, coffee/water before test)
-        const hasMedicalQuery = classifiedIntents.includes('medical_query') || /\b(fasting|sugar test|lipid|coffee|paani|pani|water|test se pehle|khana|diet)\b/i.test(patientMessage);
-        const isCorrectionOrNegation = !hasMedicalQuery && (classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage));
+        // Administrative vs Clinical splitting:
+        // report_status: Asking for PDF, results, bill, invoice (Admin)
+        // medical_query: Asking for symptoms, prep, clinical advice (Clinical - Triggers Triage)
+        const isReportRequest = classifiedIntents.includes('report_status') || /\b(pdf|report|invoice|bill|receipt|result|lab result|bheji nahi|aayi nahi)\b/i.test(patientMessage);
+        const hasMedicalQuery = !isReportRequest && (classifiedIntents.includes('medical_query') || /\b(fasting|sugar test|lipid|coffee|paani|pani|water|test se pehle|khana|diet)\b/i.test(patientMessage));
+        
+        const isCorrectionOrNegation = !hasMedicalQuery && !isReportRequest && (classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage));
         
         if (hasMedicalQuery) {
             // Safe-Fail Priority: Medical/test-prep queries override destructive cancellation actions.
@@ -631,9 +663,11 @@ router.post('/', async (req, res) => {
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
             await sendMessage(chatId, responseText);
-            logger.info(`[Webhook] Safe-Fail triggered for medical query mixed with cancellation. Halted destructive cancellation for ${chatId}.`);
+            logger.info(`[Webhook] Safe-Fail triggered for medical query. Halted destructive cancellation for ${chatId}.`);
             return res.status(200).json({ success: true, handled: true, safeFail: 'medical_query' });
         }
+
+
 
         if (isCorrectionOrNegation) {
             if (liveStatus) {
@@ -849,9 +883,30 @@ router.post('/', async (req, res) => {
                             : 'Abhi appointment dates available nahi hain. Kripya clinic reception se sampark karein.';
                         nextState = 'awaiting_appointment_date';
                     } else {
-                        await patients.createOrUpdate(chatId, { bookingDetails: { department, date, availableSlots: slots, doctorName: patient.bookingDetails?.doctorName || null } });
-                        responseText = `Aapke liye ${department} mein ${date} ko yeh time slots available hain: ${slots.slice(0, 8).map(displaySlot).join(', ')}. Kripya exact time bhejein, jaise 10:00 AM.`;
+                        const doctorName = patient.bookingDetails?.doctorName || entities?.doctor || null;
+                        await patients.createOrUpdate(chatId, { bookingDetails: { department, date, availableSlots: slots, doctorName } });
+                        const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                        responseText = `Aapke liye ${department}${docLabel} mein ${formatIsoDateForPatient(date)} ko available time slots yeh hain:`;
                         nextState = 'awaiting_appointment_time';
+
+                        const slotRows = slots.slice(0, 10).map((s) => ({
+                            id: `slot_${s}`,
+                            title: displaySlot(s),
+                            description: `${department} on ${date}`
+                        }));
+
+                        await sendListMessage(
+                            chatId,
+                            responseText,
+                            "Available Time Slots",
+                            "Select Slot",
+                            [{ title: `${department} (${date})`, rows: slotRows }],
+                            clinicData?.clinicInfo?.name || 'City Health Clinic'
+                        );
+                        await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                        await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                        await patients.updateFlowState(chatId, nextState);
+                        return;
                     }
                 }
             }
@@ -932,10 +987,33 @@ router.post('/', async (req, res) => {
                     });
                     const selectedTime = parseLatestAppointmentTime(patientMessage, availableSlots);
                     if (!selectedTime) {
-                        responseText = availableSlots.length
-                            ? `Available replacement times for ${formatIsoDateForPatient(requestedDate)} are: ${availableSlots.map(displaySlot).join(', ')}. Kripya exact time bhejein.`
-                            : `Is date par replacement slot available nahi hai. Kripya another date bhejein.`;
-                        nextState = 'awaiting_reschedule_time';
+                        if (availableSlots.length) {
+                            const docLabel = details.doctorName ? ` (Dr. ${details.doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                            responseText = `Available replacement times for ${details.department}${docLabel} on ${formatIsoDateForPatient(requestedDate)}:`;
+                            nextState = 'awaiting_reschedule_time';
+
+                            const slotRows = availableSlots.slice(0, 10).map((s) => ({
+                                id: `slot_${s}`,
+                                title: displaySlot(s),
+                                description: `${details.department} on ${requestedDate}`
+                            }));
+
+                            await sendListMessage(
+                                chatId,
+                                responseText,
+                                "Replacement Times",
+                                "Select Time",
+                                [{ title: `${details.department}`, rows: slotRows }],
+                                clinicData?.clinicInfo?.name || 'City Health Clinic'
+                            );
+                            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                            await patients.updateFlowState(chatId, nextState);
+                            return;
+                        } else {
+                            responseText = `Is date par replacement slot available nahi hai. Kripya another date bhejein.`;
+                            nextState = 'awaiting_reschedule_time';
+                        }
                     } else {
                         try {
                             const appointment = await rescheduleFutureAppointment({
@@ -960,11 +1038,13 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Multi-intent Informational Query Handler (e.g. availability + fees)
+        // Multi-intent Informational Query Handler (e.g. availability + fees + reports)
         const hasAvailability = classifiedIntents.includes('check_availability') || /\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage);
         const hasGeneralQuery = classifiedIntents.includes('general_query') || /\b(fees|fee|cost|price|address|pata|kaha|location|direction|contact)\b/i.test(patientMessage);
         const hasStatusQuery = classifiedIntents.includes('check_status') || looksLikeStatusQuery(patientMessage);
-        const informationalCount = (hasAvailability ? 1 : 0) + (hasGeneralQuery ? 1 : 0) + (hasStatusQuery ? 1 : 0);
+        const hasReportQuery = isReportRequest; // already defined above
+        
+        const informationalCount = (hasAvailability ? 1 : 0) + (hasGeneralQuery ? 1 : 0) + (hasStatusQuery ? 1 : 0) + (hasReportQuery ? 1 : 0);
 
         if (informationalCount > 1 && patient.currentFlowState === 'idle') {
             const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
@@ -974,9 +1054,16 @@ router.post('/', async (req, res) => {
             if (hasAvailability) combinedTopics.push("doctor availability & clinic timings");
             if (hasGeneralQuery) combinedTopics.push("general clinic info, fees, or address");
             if (hasStatusQuery) combinedTopics.push("patient's active queue status");
+            if (hasReportQuery) combinedTopics.push("administrative report/PDF delivery status");
 
             const extraContext = `The patient is asking a composite/multi-intent question covering: ${combinedTopics.join(" and ")}. Please answer all parts of their question comprehensively, politely, and accurately in Hinglish using the provided clinic data and strict zero-hallucination guardrails.`;
             
+            if (hasReportQuery) {
+                const targetClinicId = clinicData?.clinicId || instanceId;
+                const transcript = patient.conversationHistory.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
+                await alertStaff(chatId, patientName, 'PATIENT REQUESTING REPORT / PDF (Multi-Intent)', transcript, targetClinicId);
+            }
+
             responseText = await generateResponse(history, instanceId, clinicData, extraContext);
             nextState = patient.currentFlowState;
         }
@@ -996,6 +1083,16 @@ router.post('/', async (req, res) => {
             history.push({ role: 'user', content: patientMessage });
             const liveStatusText = `The patient is asking a general inquiry (address, fees, directions, or contact info). Answer helpfully in polite Hinglish using clinic details.`;
             responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
+            nextState = patient.currentFlowState;
+        }
+
+        // Report Status Query (PDF, lab results, etc.)
+        else if (intent === 'report_status' || (isReportRequest && informationalCount === 1)) {
+            const targetClinicId = clinicData?.clinicId || instanceId;
+            responseText = `Aapki report abhi lab se process ho rahi hai. Jaise hi PDF ready hogi, hum aapko WhatsApp par bhej denge. Urgent requests ke liye maine staff ko inform kar diya hai.`;
+            
+            const transcript = patient.conversationHistory.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n');
+            await alertStaff(chatId, patientName, 'PATIENT REQUESTING REPORT / PDF', transcript, targetClinicId);
             nextState = patient.currentFlowState;
         }
 
@@ -1089,19 +1186,51 @@ router.post('/', async (req, res) => {
                                 });
                             }
                         } else {
-                            responseText = availableSlots.length
-                                ? `Aapka ${appointment.department} appointment ${formatIsoDateForPatient(appointment.date)} at ${displaySlot(appointment.time)} hai. Available replacement times for ${formatIsoDateForPatient(requestedDate)} are: ${availableSlots.map(displaySlot).join(', ')}. Kripya exact new time bhejein.`
-                                : `Is date par replacement slot available nahi hai. Kripya another future date bhejein.`;
-                            nextState = 'awaiting_reschedule_time';
-                            await patients.createOrUpdate(chatId, {
-                                bookingDetails: {
-                                    rescheduleAppointmentId: appointment.id,
-                                    department: appointment.department,
-                                    doctorName: appointment.doctorName || null,
-                                    date: requestedDate,
-                                    availableSlots,
-                                },
-                            });
+                            if (availableSlots.length) {
+                                const docLabel = appointment.doctorName ? ` (Dr. ${appointment.doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                                responseText = `Aapka ${appointment.department}${docLabel} appointment ${formatIsoDateForPatient(appointment.date)} at ${displaySlot(appointment.time)} hai. Available replacement times for ${formatIsoDateForPatient(requestedDate)}:`;
+                                nextState = 'awaiting_reschedule_time';
+                                await patients.createOrUpdate(chatId, {
+                                    bookingDetails: {
+                                        rescheduleAppointmentId: appointment.id,
+                                        department: appointment.department,
+                                        doctorName: appointment.doctorName || null,
+                                        date: requestedDate,
+                                        availableSlots,
+                                    },
+                                });
+
+                                const slotRows = availableSlots.slice(0, 10).map((s) => ({
+                                    id: `slot_${s}`,
+                                    title: displaySlot(s),
+                                    description: `${appointment.department} on ${requestedDate}`
+                                }));
+
+                                await sendListMessage(
+                                    chatId,
+                                    responseText,
+                                    "Replacement Times",
+                                    "Select Time",
+                                    [{ title: `${appointment.department}`, rows: slotRows }],
+                                    clinicData?.clinicInfo?.name || 'City Health Clinic'
+                                );
+                                await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                                await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                                await patients.updateFlowState(chatId, nextState);
+                                return;
+                            } else {
+                                responseText = `Is date par replacement slot available nahi hai. Kripya another future date bhejein.`;
+                                nextState = 'awaiting_reschedule_time';
+                                await patients.createOrUpdate(chatId, {
+                                    bookingDetails: {
+                                        rescheduleAppointmentId: appointment.id,
+                                        department: appointment.department,
+                                        doctorName: appointment.doctorName || null,
+                                        date: requestedDate,
+                                        availableSlots,
+                                    },
+                                });
+                            }
                         }
                     }
                 } catch (error) {
@@ -1127,10 +1256,27 @@ router.post('/', async (req, res) => {
                                 convertFromToken: liveStatus.tokenNumber
                             }
                         });
-                        responseText = `Aapka Token #${liveStatus.tokenNumber} future appointment mein convert kiya ja sakta hai. ` +
-                            `${formatIsoDateForPatient(requestedDate)} ke liye available slots: ${slots.slice(0, 8).map(displaySlot).join(', ')}. ` +
-                            `Kripya time confirm karein, jaise 10:00 AM. Time confirm hote hi aaj ka token cancel ho jayega.`;
+                        responseText = `Aapka Token #${liveStatus.tokenNumber} future appointment mein convert kiya ja sakta hai. ${formatIsoDateForPatient(requestedDate)} ke liye available slots:`;
                         nextState = 'awaiting_appointment_time';
+
+                        const slotRows = slots.slice(0, 10).map((s) => ({
+                            id: `slot_${s}`,
+                            title: displaySlot(s),
+                            description: `${liveStatus.department} on ${requestedDate}`
+                        }));
+
+                        await sendListMessage(
+                            chatId,
+                            responseText,
+                            "Available Slots",
+                            "Select Slot",
+                            [{ title: `${liveStatus.department}`, rows: slotRows }],
+                            clinicData?.clinicInfo?.name || 'City Health Clinic'
+                        );
+                        await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                        await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                        await patients.updateFlowState(chatId, nextState);
+                        return;
                     } else {
                         responseText = `Is date par slots available nahi hain. Kripya another date bhejein.`;
                         nextState = 'awaiting_appointment_date';
@@ -1179,13 +1325,22 @@ router.post('/', async (req, res) => {
                             fromDate: nextOpeningDate,
                         });
                         if (offer) {
-                            responseText = `📅 Next available appointment for ${department} is on ${formatIsoDateForPatient(offer.date)} at ${displaySlot(offer.time)}. Would you like to book this slot?`;
+                            const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                            responseText = `📅 Next available appointment for ${department}${docLabel} is on ${formatIsoDateForPatient(offer.date)} at ${displaySlot(offer.time)}. Would you like to book this slot?`;
                             nextState = 'awaiting_appointment_confirmation';
                             await patients.createOrUpdate(chatId, {
                                 bookingDetails: null,
                                 pendingAppointmentOffer: offer,
                             });
-                            logger.info(`[Booking] Created pending future slot offer for ${chatId}: ${offer.date} ${offer.time} (${department}).`);
+                            
+                            await sendButtons(chatId, responseText, [
+                                { id: 'confirm_yes', text: 'Yes, Book it' },
+                                { id: 'confirm_no', text: 'No, search other' }
+                            ]);
+                            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                            await patients.updateFlowState(chatId, nextState);
+                            return;
                         } else {
                             responseText = appointmentDatePrompt(availability.nextOpening);
                             nextState = 'awaiting_appointment_date';
@@ -1216,7 +1371,8 @@ router.post('/', async (req, res) => {
                             await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName }, pendingAppointmentOffer: null });
                         } else {
                             await patients.createOrUpdate(chatId, { bookingDetails: { department, date, availableSlots: slots, doctorName } });
-                            responseText = `Aapke liye ${department} mein ${date} ko available time slots yeh hain. Kripya apna preferred slot select karein:`;
+                            const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                            responseText = `Aapke liye ${department}${docLabel} mein ${formatIsoDateForPatient(date)} ko available time slots yeh hain. Kripya apna preferred slot select karein:`;
                             nextState = 'awaiting_appointment_time';
                             
                             const slotRows = slots.slice(0, 10).map((s) => ({
@@ -1233,18 +1389,24 @@ router.post('/', async (req, res) => {
                                 [{ title: `${department} (${date})`, rows: slotRows }],
                                 clinicData?.clinicInfo?.name || 'City Health Clinic'
                             );
+                            await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                            await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                            await patients.updateFlowState(chatId, nextState);
                             return;
                         }
                         logger.info(`[Booking] Routed future-date request for ${chatId} during open hours: ${date} (${department}).`);
                     } else {
+                        const doctorName = entities?.doctor || null;
                         const booking = await queueService.bookToken({
                             clinicId, chatId, patientName, department,
                             phone: senderPhone,
                             reason: (entities?.symptoms || []).join(', ') || patientMessage.slice(0, 200),
+                            doctorName,
                         });
                         const waiting = Math.max(booking.tokenNumber - booking.currentToken, 0);
 
-                        responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}.\n` +
+                        const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                        responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}${docLabel}.\n` +
                             `👉 Now serving: #${booking.currentToken}\n` +
                             (waiting > 0
                                 ? `⏳ Estimated wait: ~${booking.estimatedWaitMinutes} min.\n`

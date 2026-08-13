@@ -83,23 +83,28 @@ ${historyBlock}
 You are an intent classification engine for a medical clinic's virtual receptionist. 
 Analyze the user's message and recent conversation history, and output a strict JSON object containing an array of identified intents.
 
-Categories of Intent:
-1. "check_availability": User is asking about clinic timings, if the clinic is open, or when the doctor sits.
-2. "book_appointment": User is explicitly asking to book, schedule, or get a token.
-3. "check_status": User is asking about their queue number, wait time, or active token.
-4. "general_query": User is asking for address, fees, directions, or contact info.
-5. "cancel_or_correct": User is frustrated, says they didn't mean to book, or wants to cancel.
-6. "medical_query": User is asking about symptoms, medicines, test preparation (fasting, drinking water/coffee before tests), or lab instructions.
-7. "confirmation": User is saying yes, okay, "haan kar do", "thik hai", or confirming a previous question/proposal by the bot.
-8. "human_handoff": User is asking to speak with a human receptionist, staff, or doctor ("receptionist se baat karni hai").
+	Categories of Intent:
+	1. "check_availability": User is asking about clinic timings, if the clinic is open, or when the doctor sits.
+	2. "book_appointment": User is explicitly asking to book, schedule, or get a token.
+	3. "check_status": User is asking about their queue number, wait time, or active token.
+	4. "general_query": User is asking for address, fees, directions, or contact info.
+	5. "cancel_or_correct": User is frustrated, says they didn't mean to book, or wants to cancel.
+	6. "medical_query": User is asking for clinical advice, symptoms, medicines, test preparation (fasting, water), or lab instructions.
+	7. "report_status": User is asking for administrative document delivery, PDF reports, lab results, bill invoices, or test status.
+	8. "confirmation": User is saying yes, okay, "haan kar do", "thik hai", or confirming a previous question/proposal by the bot.
+	9. "human_handoff": User is asking to speak with a human receptionist, staff, or doctor ("receptionist se baat karni hai").
 
-Examples for mapping (pay close attention to Hinglish & context):
-- "aaj doctor saab available hai?" -> ["check_availability"]
-- "doctor kab beth te hai aur fees kitni hai?" -> ["check_availability", "general_query"]
-- "haan kar do" (when bot asked to book) -> ["confirmation"]
-- "mujhe receptionist se baat karni hai" -> ["human_handoff"]
-- "Mera subah fasting blood sugar test hai, kya coffee pi sakti hu? Agar nahi, toh token cancel kar do" -> ["medical_query", "cancel_or_correct"]
-- "arey bhai mene booking karne ko bola hi nahi hai" -> ["cancel_or_correct"]
+	STRICT NEGATIVE CONSTRAINT:
+	- Do NOT classify requests for PDF reports, lab results, or invoices as "medical_query". These are administrative and MUST be classified as "report_status".
+
+	Examples for mapping (pay close attention to Hinglish & context):
+	- "aaj doctor saab available hai?" -> ["check_availability"]
+	- "doctor kab beth te hai aur fees kitni hai?" -> ["check_availability", "general_query"]
+	- "haan kar do" (when bot asked to book) -> ["confirmation"]
+	- "mujhe receptionist se baat karni hai" -> ["human_handoff"]
+	- "Mera subah fasting blood sugar test hai, kya coffee pi sakti hu?" -> ["medical_query"]
+	- "Mera kal subah blood test hua tha, report PDF mein chahiye" -> ["report_status"]
+	- "arey bhai mene booking karne ko bola hi nahi hai" -> ["cancel_or_correct"]
 
 User message: "${message}"
 
