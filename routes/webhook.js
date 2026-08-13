@@ -640,7 +640,7 @@ router.post('/', async (req, res) => {
         const isReportRequest = classifiedIntents.includes('report_status') || /\b(pdf|report|invoice|bill|receipt|result|lab result|bheji nahi|aayi nahi)\b/i.test(patientMessage);
         
         // Safety Screening
-        const safetyScreen = triageService.triageMessage(patientMessage);
+        const safetyScreen = triageMessage(patientMessage);
         const isEmergency = routingTier === 3 && (classifiedIntents.includes('emergency') || safetyScreen.level === 'emergency');
         const hasMedicalQuery = (routingTier === 3 && classifiedIntents.includes('medical_query')) || (!isReportRequest && /\b(fasting|sugar test|lipid|coffee|paani|pani|water|test se pehle|khana|diet)\b/i.test(patientMessage));
         const isHumanHandoff = routingTier === 3 && (classifiedIntents.includes('human_handoff') || /receptionist|staff|doctor se baat|human/i.test(patientMessage));
