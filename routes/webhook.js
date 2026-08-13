@@ -618,10 +618,11 @@ router.post('/', async (req, res) => {
         const liveStatus = clinicId ? await queueService.getPatientStatus(chatId) : null;
         const entities = {};
 
-        // 3. Classify Intent using Groq
+        // 3. Classify Intent using Groq (Tiered Routing)
         const classification = await classifyIntent(patientMessage, patient.conversationHistory.slice(-3));
         const classifiedIntent = classification.intent || 'unknown';
         const classifiedIntents = classification.intents || [classifiedIntent];
+        const routingTier = classification.routing_tier || 2;
 
         // Handle technical 401 errors early
         if (classifiedIntents.includes('error_401')) {
@@ -635,37 +636,44 @@ router.post('/', async (req, res) => {
             return;
         }
 
-        // Administrative vs Clinical splitting:
-        // report_status: Asking for PDF, results, bill, invoice (Admin)
-        // medical_query: Asking for symptoms, prep, clinical advice (Clinical - Triggers Triage)
+        // Administrative vs Clinical splitting (Tier 3 Triage):
         const isReportRequest = classifiedIntents.includes('report_status') || /\b(pdf|report|invoice|bill|receipt|result|lab result|bheji nahi|aayi nahi)\b/i.test(patientMessage);
-        const hasMedicalQuery = !isReportRequest && (classifiedIntents.includes('medical_query') || /\b(fasting|sugar test|lipid|coffee|paani|pani|water|test se pehle|khana|diet)\b/i.test(patientMessage));
         
-        const isCorrectionOrNegation = !hasMedicalQuery && !isReportRequest && (classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage));
-        
-        if (hasMedicalQuery) {
-            // Safe-Fail Priority: Medical/test-prep queries override destructive cancellation actions.
-            // Route to human handoff or provide safe guidance without executing cancellation.
+        // Safety Screening
+        const safetyScreen = triageService.triageMessage(patientMessage);
+        const isEmergency = routingTier === 3 && (classifiedIntents.includes('emergency') || safetyScreen.level === 'emergency');
+        const hasMedicalQuery = (routingTier === 3 && classifiedIntents.includes('medical_query')) || (!isReportRequest && /\b(fasting|sugar test|lipid|coffee|paani|pani|water|test se pehle|khana|diet)\b/i.test(patientMessage));
+        const isHumanHandoff = routingTier === 3 && (classifiedIntents.includes('human_handoff') || /receptionist|staff|doctor se baat|human/i.test(patientMessage));
+
+        // TIER 3: Human Handoff & Emergency (Priority 1)
+        if (isEmergency || hasMedicalQuery || isHumanHandoff || safetyScreen.level === 'urgent') {
             const targetClinicId = clinicData?.clinicId || instanceId;
-            responseText = `Namastey sir/ma'am, test preparation ya medical advice ke baare mein chat par decide nahi kiya ja sakta. Main aapko clinic staff se connect kar raha hu taaki aapke test aur token ko properly coordinate kiya ja sake.`;
-            nextState = 'human_handling';
+            let handoffReason = 'Human Handoff Requested';
             
-            await patients.createOrUpdate(chatId, {
-                currentFlowState: nextState,
-                clinicId: targetClinicId,
-                lastQuery: patientMessage,
-                aiNotes: 'Medical/Test Prep Query mixed with cancellation request - Halted auto-cancel',
-            });
+            if (isEmergency || safetyScreen.level === 'emergency') {
+                responseText = "Aapke symptoms ko clinical review ki zarurat hai. Kripya turant nearest hospital se sampark karein. Clinic staff ko alert kar diya gaya hai.";
+                handoffReason = 'EMERGENCY TRIAGE ALERT';
+            } else if (hasMedicalQuery || safetyScreen.level === 'urgent') {
+                responseText = "Test preparation ya medical advice ke baare mein chat par decide nahi kiya ja sakta. Main aapko clinic staff se connect kar raha hu.";
+                handoffReason = 'Medical Query / Test Prep Review';
+            } else {
+                responseText = "Main aapko clinic receptionist se connect kar raha hu. Kripya thodi der wait karein.";
+            }
+
+            nextState = 'human_handling';
+            await patients.createOrUpdate(chatId, { currentFlowState: nextState, clinicId: targetClinicId, lastQuery: patientMessage });
             
             const transcript = patient.conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
-            await alertStaff(chatId, patientName, 'Medical Query / Test Prep Review Requested', transcript, targetClinicId);
+            await alertStaff(chatId, patientName, handoffReason, transcript, targetClinicId);
             
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
             await sendMessage(chatId, responseText);
-            logger.info(`[Webhook] Safe-Fail triggered for medical query. Halted destructive cancellation for ${chatId}.`);
-            return res.status(200).json({ success: true, handled: true, safeFail: 'medical_query' });
+            return res.status(200).json({ success: true, handled: true, tier: 3 });
         }
+
+        const isCorrectionOrNegation = !isReportRequest && (classifiedIntent === 'cancel_or_correct' || classifiedIntents.includes('cancel_or_correct') || /(mene nahi bola|nahi karni|nahi bola|galat|wrong|cancel karde|cancel kar do|maine nahi)/i.test(patientMessage));
+        
 
 
 
@@ -688,14 +696,29 @@ router.post('/', async (req, res) => {
 
         const requestedAppointmentId = extractAppointmentId(patientMessage);
         let intent = classifiedIntents[0] || classifiedIntent;
-        if (looksLikeStatusQuery(patientMessage)) {
-            intent = 'check_status';
-        } else if (/\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage)) {
-            intent = 'check_availability';
-        } else if (classifiedIntents.includes('human_handoff') || /receptionist|staff|doctor se baat|human/i.test(patientMessage)) {
-            intent = 'human_handoff';
-        } else if (classifiedIntents.includes('confirmation') && patient.currentFlowState === 'awaiting_appointment_date') {
-            intent = 'book_appointment';
+        
+        // Tier 1 & 2 Routing Pre-checks
+        if (looksLikeStatusQuery(patientMessage)) intent = 'check_status';
+        else if (/\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage)) intent = 'check_availability';
+        else if (isReportRequest) intent = 'report_status';
+        
+        // TIER 1: Pre-fixed Administrative (Priority 2)
+        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['check_availability', 'clinic_address', 'check_status'].includes(intent))) {
+            const staticTemplates = {
+                "check_availability": `Namastey! Clinic timings: ${clinicData?.clinic_info?.timings || 'Mon-Sat 9 AM - 8 PM, Sun Closed'}. Kripya date bhejein agar aap appointment book karna chahte hain.`,
+                "clinic_address": `Humara address hai: ${clinicData?.clinic_info?.address || '15 Hospital Road, Udaipur'}.`,
+                "check_status": liveStatus 
+                    ? `Aapka Token #${liveStatus.tokenNumber} hai. Currently serving: #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} mins.`
+                    : "Aapka koi active token nahi hai. Kya aap appointment book karna chahte hain?"
+            };
+
+            if (staticTemplates[intent]) {
+                responseText = staticTemplates[intent];
+                await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                await sendMessage(chatId, responseText);
+                return res.status(200).json({ success: true, handled: true, tier: 1 });
+            }
         }
 
         if (requestedAppointmentId && isFutureAppointmentChangeRequest(patientMessage)) {
@@ -708,9 +731,8 @@ router.post('/', async (req, res) => {
 
         // Deterministic safety screen runs in parallel with LLM classification.
         // The classifier may assist, but it never has authority to suppress a
-        // high-risk phrase that requires escalation.
-        const safetyScreen = triageMessage(patientMessage);
-        const isEmergency = safetyScreen.level === 'emergency' ||
+        // high-risk phrase that requires escalation (Already handled in Tier 3 check above, but keeping for legacy loop safety)
+        const isEmergencyLegacy = safetyScreen.level === 'emergency' ||
                            (entities.symptoms && entities.symptoms.some(s =>
                                ['chest pain', 'bleeding', 'breathing', 'unconscious', 'emergency'].includes(s.toLowerCase())
                            ));
@@ -720,8 +742,8 @@ router.post('/', async (req, res) => {
         // ==========================================
         // 🛑 EMERGENCY LOOP BYPASS
         // ==========================================
-        if (isEmergency || safetyScreen.level === 'urgent') {
-            const isEmergencyFlag = isEmergency || safetyScreen.level === 'emergency';
+        if (isEmergencyLegacy || safetyScreen.level === 'urgent') {
+            const isEmergencyFlag = isEmergencyLegacy || safetyScreen.level === 'emergency';
             responseText = isEmergencyFlag ? getEmergencyReply() : (urgentNotice || 'Namastey sir, aapke symptoms ko qualified clinical review ki zarurat ho sakti hai. Clinic staff ko alert kiya ja raha hai.');
             nextState = 'human_handling';
             const targetClinicId = clinicData?.clinicId || instanceId;

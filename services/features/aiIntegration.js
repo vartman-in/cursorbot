@@ -31,13 +31,24 @@ const MODELS = {
  */
 async function generateResponse(history, instanceId, clinicData, extraContext = "") {
     try {
-        const { CLINIC_RECEPTIONIST_PROMPT, buildClinicContext } = require("./clinicPrompt");
+        const { buildClinicContext } = require("./clinicPrompt");
         const clinicContextStr = buildClinicContext(clinicData);
 
-        let systemPrompt = CLINIC_RECEPTIONIST_PROMPT.replace("{{context}}", clinicContextStr);
-        if (extraContext) {
-            systemPrompt += `\n\nAdditional Real-time Context:\n${extraContext}`;
-        }
+        // Tier 2 Simplified Persona: Focus on complex administrative reasoning
+        const systemPrompt = `Role & Identity:
+You are a highly efficient, empathetic Virtual Receptionist for a medical clinic.
+The user has asked a complex administrative question that our automated system could not answer with a standard template. 
+Your job is to answer their specific query politely in Hinglish using the clinic data below.
+
+Strict Guardrails:
+1. Administrative Only: Do not offer medical advice, diagnosis, or test preparation instructions.
+2. No Guessing: If the user asks for a price or policy NOT in the context, say: "I don't have the exact details for that right now, but our front desk will help you."
+3. Concise: Keep answers short. No long lists or verbose greetings if already mid-conversation.
+4. Formatting: Use natural Hinglish. Clean bullet points. Acknowledge doctors by name.
+
+Clinic Context:
+${clinicContextStr}
+${extraContext ? `\nAdditional Context:\n${extraContext}` : ''}`;
 
         const formattedMessages = [
             { role: "system", content: systemPrompt },
@@ -78,40 +89,38 @@ async function classifyIntent(message, history = []) {
           }).join("\n")}\n\n`
         : "";
 
-    const prompt = `
+	const prompt = `
 ${historyBlock}
-You are an intent classification engine for a medical clinic's virtual receptionist. 
-Analyze the user's message and recent conversation history, and output a strict JSON object containing an array of identified intents.
+You are the Master Router for a medical clinic's virtual receptionist. 
+Analyze the user's message and context to output a strict JSON object with identified intents and their designated routing_tier.
 
-	Categories of Intent:
-	1. "check_availability": User is asking about clinic timings, if the clinic is open, or when the doctor sits.
-	2. "book_appointment": User is explicitly asking to book, schedule, or get a token.
-	3. "check_status": User is asking about their queue number, wait time, or active token.
-	4. "general_query": User is asking for address, fees, directions, or contact info.
-	5. "cancel_or_correct": User is frustrated, says they didn't mean to book, or wants to cancel.
-	6. "medical_query": User is asking for clinical advice, symptoms, medicines, test preparation (fasting, water), or lab instructions.
-	7. "report_status": User is asking for administrative document delivery, PDF reports, lab results, bill invoices, or test status.
-	8. "confirmation": User is saying yes, okay, "haan kar do", "thik hai", or confirming a previous question/proposal by the bot.
-	9. "human_handoff": User is asking to speak with a human receptionist, staff, or doctor ("receptionist se baat karni hai").
+TIER 1: Pre-fixed Administrative (Standard queries)
+- "check_availability": Timings, open/closed, doctor schedule (e.g., "kab baithte hain", "timing kya hai").
+- "clinic_address": Location, directions (e.g., "clinic kahan hai", "address bhejo").
+- "book_appointment": Explicit booking/token request (e.g., "number laga do", "appointment chahiye").
+- "check_status": Queue position, wait time (e.g., "token status kya hai").
 
-	STRICT NEGATIVE CONSTRAINT:
-	- Do NOT classify requests for PDF reports, lab results, or invoices as "medical_query". These are administrative and MUST be classified as "report_status".
+TIER 2: Generative Reasoning (Complex or multi-part)
+- "general_query": Fees, specific services, parking, insurance (e.g., "X-ray hota hai?", "fees kitni hai").
+- "report_status": PDF reports, lab results, turnaround time (e.g., "report kab tak aayegi").
+- "cancel_or_correct": Cancellations, correcting bot mistakes (e.g., "cancel kar do", "maine nahi bola").
+- "confirmation": Affirmations to bot questions (e.g., "haan", "thik hai").
 
-	Examples for mapping (pay close attention to Hinglish & context):
-	- "aaj doctor saab available hai?" -> ["check_availability"]
-	- "doctor kab beth te hai aur fees kitni hai?" -> ["check_availability", "general_query"]
-	- "haan kar do" (when bot asked to book) -> ["confirmation"]
-	- "mujhe receptionist se baat karni hai" -> ["human_handoff"]
-	- "Mera subah fasting blood sugar test hai, kya coffee pi sakti hu?" -> ["medical_query"]
-	- "Mera kal subah blood test hua tha, report PDF mein chahiye" -> ["report_status"]
-	- "arey bhai mene booking karne ko bola hi nahi hai" -> ["cancel_or_correct"]
+TIER 3: Human Handoff (Clinical or Emergency)
+- "medical_query": Symptoms, medicines, test prep (e.g., "ulti ho rahi hai", "kya dawai loon").
+- "emergency": Severe symptoms, urgent help (e.g., "saans lene mein dikkat", "tez bukhar").
+- "human_handoff": Requesting human staff (e.g., "receptionist se baat karao").
 
-User message: "${message}"
+STRICT NEGATIVE CONSTRAINT:
+- PDF/Report requests are TIER 2 ("report_status"), NOT TIER 3 ("medical_query").
 
-Return ONLY valid JSON in this exact format, with no markdown formatting or extra text:
+Return ONLY valid JSON in this format:
 {
-  "intents": ["intent_1", "intent_2"]
-}`;
+  "intents": ["intent_name"],
+  "routing_tier": 1 | 2 | 3
+}
+
+User message: "${message}"`;
 
     try {
         logger.info(`[Groq] Calling classifyIntent with model: ${MODELS.fast}`);
@@ -126,10 +135,12 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or extr
         const raw = completion.choices?.[0]?.message?.content?.trim() || "";
         const objMatch = raw.match(/\{.*\}/s);
         const result = JSON.parse(objMatch ? objMatch[0] : raw);
-        // Ensure backwards compatibility with single intent format if model returns string
+        // Ensure backwards compatibility and include routing_tier
         let intentsArray = result.intents || (result.intent ? [result.intent] : ["unknown"]);
-        logger.info(`[Groq] classifyIntent success. Intents: ${JSON.stringify(intentsArray)}`);
-        return { intents: intentsArray, intent: intentsArray[0] };
+        let tier = result.routing_tier || 2; // Default to generative if not specified
+        
+        logger.info(`[Groq] classifyIntent success. Intents: ${JSON.stringify(intentsArray)}, Tier: ${tier}`);
+        return { intents: intentsArray, intent: intentsArray[0], routing_tier: tier };
     } catch (err) {
         logger.warn(`[Groq] classifyIntent fallback: ${err.message}`);
         if (err.status === 401) {
