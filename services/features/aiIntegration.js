@@ -29,10 +29,10 @@ const MODELS = {
 /**
  * Generate a conversational response using Groq LLM with system prompt.
  */
-async function generateResponse(history, instanceId, clinicData, extraContext = "") {
+async function generateResponse(history, instanceId, clinicData, extraContext = "", intent = "general_query") {
     try {
-        const { buildClinicContext } = require("./clinicPrompt");
-        const clinicContextStr = buildClinicContext(clinicData);
+        const { buildConciseClinicContext } = require("./clinicPrompt");
+        const clinicContextStr = buildConciseClinicContext(clinicData, intent);
 
         // Tier 2 Simplified Persona: Focus on complex administrative reasoning
         const systemPrompt = `Role & Identity:
@@ -43,7 +43,7 @@ Your job is to answer their specific query politely in Hinglish using the clinic
 Strict Guardrails:
 1. Administrative Only: Do not offer medical advice, diagnosis, or test preparation instructions.
 2. No Guessing: If the user asks for a price or policy NOT in the context, say: "I don't have the exact details for that right now, but our front desk will help you."
-3. Concise: Keep answers short. No long lists or verbose greetings if already mid-conversation.
+3. Concise: Keep answers short. No long lists or overly verbose greetings if already mid-conversation.
 4. Formatting: Use natural Hinglish. Clean bullet points. Acknowledge doctors by name.
 
 Clinic Context:
@@ -95,6 +95,7 @@ You are the Master Router for a medical clinic's virtual receptionist.
 Analyze the user's message and context to output a strict JSON object with identified intents and their designated routing_tier.
 
 TIER 1: Pre-fixed Administrative (Standard queries)
+- "greeting": Simple greetings (e.g., "hi", "hello", "namastey").
 - "check_availability": Timings, open/closed, doctor schedule (e.g., "kab baithte hain", "timing kya hai").
 - "clinic_address": Location, directions (e.g., "clinic kahan hai", "address bhejo").
 - "book_appointment": Explicit booking/token request (e.g., "number laga do", "appointment chahiye").

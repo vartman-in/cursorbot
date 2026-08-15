@@ -703,13 +703,15 @@ router.post('/', async (req, res) => {
         else if (isReportRequest) intent = 'report_status';
         
         // TIER 1: Pre-fixed Administrative (Priority 2)
-        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['check_availability', 'clinic_address', 'check_status'].includes(intent))) {
+        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'check_availability', 'clinic_address', 'check_status', 'general_query'].includes(intent))) {
             const staticTemplates = {
+                "greeting": `Namastey sir/ma'am, welcome to ${clinicData?.clinic_info?.name || 'City Health Clinic'}, me aapki kese help kar sakta hu? Main appointments, clinic timings, address, aur fees ki details de sakta hu.`,
                 "check_availability": `Namastey! Clinic timings: ${clinicData?.clinic_info?.timings || 'Mon-Sat 9 AM - 8 PM, Sun Closed'}. Kripya date bhejein agar aap appointment book karna chahte hain.`,
                 "clinic_address": `Humara address hai: ${clinicData?.clinic_info?.address || '15 Hospital Road, Udaipur'}.`,
                 "check_status": liveStatus 
                     ? `Aapka Token #${liveStatus.tokenNumber} hai. Currently serving: #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} mins.`
-                    : "Aapka koi active token nahi hai. Kya aap appointment book karna chahte hain?"
+                    : "Aapka koi active token nahi hai. Kya aap appointment book karna chahte hain?",
+                "general_query": `Namastey! Aap clinic ke fees, services, ya location ke baare mein puch sakte hain. Humara address: ${clinicData?.clinic_info?.address || '15 Hospital Road'}. Consultation timings: ${clinicData?.clinic_info?.timings || '9 AM - 8 PM'}.`
             };
 
             if (staticTemplates[intent]) {
@@ -1454,7 +1456,7 @@ router.post('/', async (req, res) => {
                   `Only use these exact numbers if you mention their appointment — never invent or recall different figures from earlier in the conversation.`
                 : `The patient does NOT currently have any active token or appointment. If earlier conversation history mentions one, it is no longer valid — do not reference old token numbers, wait times, or delays as if still current.`;
 
-            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
+            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText, 'general_query');
         }
 
         // Keep the safety guidance visible while still allowing a valid

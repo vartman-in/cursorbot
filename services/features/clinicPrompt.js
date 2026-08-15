@@ -66,7 +66,42 @@ Policies:
 - Cancellation: ${policies.cancellation || 'Standard cancellation policy.'}`;
 }
 
+/**
+ * Builds a concise context based on the identified intent to save tokens.
+ */
+function buildConciseClinicContext(tenantData, intent) {
+    if (!tenantData) return "No specific clinic context provided.";
+
+    const info = tenantData.clinic_info || {};
+    const doctors = tenantData.doctors || [];
+    const services = tenantData.services || [];
+    const policies = tenantData.policies || {};
+
+    let context = `Clinic Name: ${info.name || 'City Health Clinic'}\n`;
+
+    if (intent === 'general_query' || intent === 'check_availability') {
+        context += `Location: ${info.location || 'Udaipur'}\nAddress: ${info.address || '15 Hospital Road, Udaipur'}\nTimings: ${info.timings || 'Mon-Sat: 09:00 AM - 08:00 PM, Sunday: Closed'}\n`;
+        if (doctors.length) {
+            context += `Doctors:\n${doctors.map(d => `- ${d.name} (${d.specialization})`).join("\n")}\n`;
+        }
+    }
+
+    if (intent === 'general_query') {
+        if (services.length) {
+            context += `Services & Pricing:\n${services.map(s => `- ${s.name}: ₹${s.total_price}`).join("\n")}\n`;
+        }
+        context += `Policies: ${policies.booking_rules || 'Standard booking policy.'}\n`;
+    }
+
+    if (intent === 'report_status') {
+        context += `Report Policy: ${policies.report_policy || 'Reports available via WhatsApp/Email. Turnaround: 24-48 hours.'}\n`;
+    }
+
+    return context;
+}
+
 module.exports = {
     CLINIC_RECEPTIONIST_PROMPT,
-    buildClinicContext
+    buildClinicContext,
+    buildConciseClinicContext
 };
