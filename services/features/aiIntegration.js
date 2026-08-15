@@ -33,10 +33,12 @@ async function generateResponse(history, instanceId, clinicData, extraContext = 
     try {
         const { buildConciseClinicContext } = require("./clinicPrompt");
         const clinicContextStr = buildConciseClinicContext(clinicData, intent);
+        const nowIST = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
         // Tier 2 Simplified Persona: Focus on complex administrative reasoning
         const systemPrompt = `Role & Identity:
 You are a highly efficient, empathetic Virtual Receptionist for a medical clinic.
+Current Date/Time (IST): ${nowIST}
 The user has asked a complex administrative question that our automated system could not answer with a standard template. 
 Your job is to answer their specific query politely in Hinglish using the clinic data below.
 
@@ -45,6 +47,7 @@ Strict Guardrails:
 2. No Guessing: If the user asks for a price or policy NOT in the context, say: "I don't have the exact details for that right now, but our front desk will help you."
 3. Concise: Keep answers short. No long lists or overly verbose greetings if already mid-conversation.
 4. Formatting: Use natural Hinglish. Clean bullet points. Acknowledge doctors by name.
+5. Temporal Awareness: Use the current date/time to answer queries about "today", "tomorrow", or specific dates. Check them against the clinic timings.
 
 Clinic Context:
 ${clinicContextStr}
@@ -89,19 +92,21 @@ async function classifyIntent(message, history = []) {
           }).join("\n")}\n\n`
         : "";
 
+	const nowIST = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 	const prompt = `
 ${historyBlock}
+Current Date/Time (IST): ${nowIST}
 You are the Master Router for a medical clinic's virtual receptionist. 
 Analyze the user's message and context to output a strict JSON object with identified intents and their designated routing_tier.
 
 TIER 1: Pre-fixed Administrative (Standard queries)
 - "greeting": Simple greetings (e.g., "hi", "hello", "namastey").
-- "check_availability": Timings, open/closed, doctor schedule (e.g., "kab baithte hain", "timing kya hai").
 - "clinic_address": Location, directions (e.g., "clinic kahan hai", "address bhejo").
 - "book_appointment": Explicit booking/token request (e.g., "number laga do", "appointment chahiye").
 - "check_status": Queue position, wait time (e.g., "token status kya hai").
 
 TIER 2: Generative Reasoning (Complex or multi-part)
+- "check_availability": Timings, open/closed, doctor schedule, or specific date availability (e.g., "kab baithte hain", "kal open hai kya", "16 august ko khula hai").
 - "general_query": Fees, specific services, parking, insurance (e.g., "X-ray hota hai?", "fees kitni hai").
 - "report_status": PDF reports, lab results, turnaround time (e.g., "report kab tak aayegi").
 - "cancel_or_correct": Cancellations, correcting bot mistakes (e.g., "cancel kar do", "maine nahi bola").

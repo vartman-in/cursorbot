@@ -699,14 +699,13 @@ router.post('/', async (req, res) => {
         
         // Tier 1 & 2 Routing Pre-checks
         if (looksLikeStatusQuery(patientMessage)) intent = 'check_status';
-        else if (/\b(available|availabl|doctor.*hai|aaj.*doctor|timing|kab.*beth|appointment.*milti|khula)\b/i.test(patientMessage)) intent = 'check_availability';
         else if (isReportRequest) intent = 'report_status';
         
         // TIER 1: Pre-fixed Administrative (Priority 2)
-        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'check_availability', 'clinic_address', 'check_status', 'general_query'].includes(intent))) {
+        // Note: check_availability is moved to Tier 2 for generative temporal reasoning
+        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'clinic_address', 'check_status', 'general_query'].includes(intent))) {
             const staticTemplates = {
                 "greeting": `Namastey sir/ma'am, welcome to ${clinicData?.clinic_info?.name || 'City Health Clinic'}, me aapki kese help kar sakta hu? Main appointments, clinic timings, address, aur fees ki details de sakta hu.`,
-                "check_availability": `Namastey! Clinic timings: ${clinicData?.clinic_info?.timings || 'Mon-Sat 9 AM - 8 PM, Sun Closed'}. Kripya date bhejein agar aap appointment book karna chahte hain.`,
                 "clinic_address": `Humara address hai: ${clinicData?.clinic_info?.address || '15 Hospital Road, Udaipur'}.`,
                 "check_status": liveStatus 
                     ? `Aapka Token #${liveStatus.tokenNumber} hai. Currently serving: #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} mins.`
@@ -730,6 +729,16 @@ router.post('/', async (req, res) => {
 
         // 4. Handle based on intent and current state
         nextState = patient.currentFlowState;
+
+        // Deterministic Date-Only Detection for idle state
+        // If a patient just sends a date (e.g., "16 August"), we treat it as an intent to check availability for that date.
+        if (nextState === 'idle' && intent === 'unknown') {
+            const detectedDate = parseAppointmentDate(patientMessage);
+            if (detectedDate) {
+                intent = 'check_availability';
+                logger.info(`[Webhook] Date detected in idle message: ${detectedDate}. Overriding intent to check_availability.`);
+            }
+        }
 
         // Deterministic safety screen runs in parallel with LLM classification.
         // The classifier may assist, but it never has authority to suppress a
@@ -1092,13 +1101,57 @@ router.post('/', async (req, res) => {
             nextState = patient.currentFlowState;
         }
         else if (intent === 'check_availability') {
-            const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
-            history.push({ role: 'user', content: patientMessage });
-            const liveStatusText = liveStatus
-                ? `Note: The patient currently has Token #${liveStatus.tokenNumber} for ${liveStatus.department} today, but they are asking about availability/timings. Answer their availability question first in polite Hinglish based on the clinic context, and gently remind them of their active token if relevant.`
-                : `The patient is asking about doctor availability or clinic timings. Answer directly in polite Hinglish using the clinic details.`;
-            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
-            nextState = patient.currentFlowState;
+            const requestedDate = parseAppointmentDate(patientMessage);
+            const department = resolveDepartment(entities, clinicData);
+            const doctorName = entities?.doctor || null;
+
+            if (requestedDate && patient.currentFlowState === 'idle') {
+                // Deterministic Date-Availability Handling:
+                // If the user provided a specific date, we check it against the clinic schedule.
+                const slots = getSlotsForDate({ clinicData, department, date: requestedDate });
+                
+                if (!slots.length) {
+                    const nextDates = await getNextAvailableDates({ clinicData, fromDate: addDaysIso(requestedDate, 1), days: 14 });
+                    responseText = nextDates.length
+                        ? `Is date (${formatIsoDateForPatient(requestedDate)}) par clinic appointment ke liye available nahi hai. Next available date: ${formatIsoDateForPatient(nextDates[0])}. Kripya apni preferred date bhejein.`
+                        : `I'm sorry, ${formatIsoDateForPatient(requestedDate)} ko clinic closed hai aur koi upcoming slots available nahi hain.`;
+                    nextState = 'awaiting_appointment_date';
+                    await patients.createOrUpdate(chatId, { bookingDetails: { department, doctorName }, pendingAppointmentOffer: null });
+                } else {
+                    await patients.createOrUpdate(chatId, { bookingDetails: { department, date: requestedDate, availableSlots: slots, doctorName } });
+                    const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+                    responseText = `Aapke liye ${department}${docLabel} mein ${formatIsoDateForPatient(requestedDate)} ko available time slots yeh hain. Kripya apna preferred slot select karein:`;
+                    nextState = 'awaiting_appointment_time';
+                    
+                    const slotRows = slots.slice(0, 10).map((s) => ({
+                        id: `slot_${s}`,
+                        title: displaySlot(s),
+                        description: `${department} on ${requestedDate}`
+                    }));
+                    
+                    await sendListMessage(
+                        chatId,
+                        responseText,
+                        "Available Time Slots",
+                        "Select Slot",
+                        [{ title: `${department} (${requestedDate})`, rows: slotRows }],
+                        clinicData?.clinicInfo?.name || 'City Health Clinic'
+                    );
+                    await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                    await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                    await patients.updateFlowState(chatId, nextState);
+                    return res.status(200).json({ success: true, handled: true, date: requestedDate });
+                }
+            } else {
+                // Fallback to LLM for general timing/availability questions
+                const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
+                history.push({ role: 'user', content: patientMessage });
+                const liveStatusText = liveStatus
+                    ? `Note: The patient currently has Token #${liveStatus.tokenNumber} for ${liveStatus.department} today, but they are asking about availability/timings. Answer their availability question first in polite Hinglish based on the clinic context, and gently remind them of their active token if relevant.`
+                    : `The patient is asking about doctor availability or clinic timings. Answer directly in polite Hinglish using the clinic details.`;
+                responseText = await generateResponse(history, instanceId, clinicData, liveStatusText, 'check_availability');
+                nextState = patient.currentFlowState;
+            }
         }
 
         // General Query (address, fees, directions, contact info)
