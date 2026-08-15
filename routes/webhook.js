@@ -248,7 +248,8 @@ function wantsClinicalAppointment(message) {
 
 function isAffirmative(message) {
     const input = String(message || '').trim().toLowerCase();
-    if (input === 'confirm_yes') return true;
+    // Support numerical IDs from buttons (1 is Haan/Confirm/Yes in all flows)
+    if (input === 'confirm_yes' || input === '1') return true;
     return /^\s*(yes|y|haan|ha|han|ji|theek hai|thik hai|book|book karo|kar do)\s*[.!]?\s*$/i.test(input);
 }
 
@@ -257,7 +258,8 @@ function isAffirmative(message) {
 // never silently cancel a pending appointment.
 function isExplicitAppointmentCancellation(message) {
     const input = String(message || '').trim().toLowerCase().replace(/[.!]/g, '');
-    if (input === 'confirm_no') return true;
+    // Support numerical IDs from buttons (2 is Nahi/Cancel/No in all flows)
+    if (input === 'confirm_no' || input === '2') return true;
     return /^(cancel|cancel appointment|cancel booking|booking cancel(?: karo)?|appointment cancel(?: karo)?|mujhe cancel karna hai|nahi chahiye)$/.test(input);
 }
 
@@ -590,9 +592,9 @@ router.post('/', async (req, res) => {
             await patients.updateFlowState(chatId, 'idle');
             
             await sendButtons(chatId, responseText, [
-                { id: 'book_appointment', text: '📅 Token book karein' },
-                { id: 'check_status', text: '🎫 Token status check karein' },
-                { id: 'clinic_timings', text: '⏰ Timings, fees & location' }
+                { id: '1', text: '📅 Token book karein' },
+                { id: '2', text: '🎫 Token status check karein' },
+                { id: '3', text: '⏰ Timings, fees & location' }
             ], clinicData?.clinic_info?.name || 'City Health Clinic');
             return;
         }
@@ -740,11 +742,11 @@ router.post('/', async (req, res) => {
                 await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
                 
                 await sendButtons(chatId, responseText, [
-                    { id: 'book_appointment', text: '📅 Token book karein' },
-                    { id: 'check_status', text: '🎫 Token status check karein' },
-                    { id: 'clinic_timings', text: '⏰ Timings, fees & location' }
+                    { id: '1', text: '📅 Token book karein' },
+                    { id: '2', text: '🎫 Token status check karein' },
+                    { id: '3', text: '⏰ Timings, fees & location' }
                 ], clinicData?.clinic_info?.name || 'City Health Clinic');
-                return res.status(200).json({ success: true, handled: true, tier: 1 });
+                return;
             }
 
             const staticTemplates = {
@@ -1144,7 +1146,8 @@ router.post('/', async (req, res) => {
         }
         // SOP v2: Step 2 — Reason for Visit
         else if (patient.currentFlowState === 'awaiting_visit_reason') {
-            const visitReason = patientMessage.trim();
+            const reasonMap = { '1': 'Fever/Cold', '2': 'General Consultation', '3': 'Follow-up' };
+            const visitReason = reasonMap[patientMessage.trim()] || patientMessage.trim();
             const clinicDepartments = getClinicDepartments(clinicData);
             
             // Skip department selection if single-department clinic
@@ -1169,8 +1172,8 @@ router.post('/', async (req, res) => {
                 });
                 
                 await sendButtons(chatId, responseText, [
-                    { id: 'confirm_yes', text: '✅ Haan, Confirm' },
-                    { id: 'confirm_no', text: '❌ Nahi, Cancel' }
+                    { id: '1', text: '✅ Haan, Confirm' },
+                    { id: '2', text: '❌ Nahi, Cancel' }
                 ], clinicData?.clinic_info?.name || 'City Health Clinic');
                 return res.status(200).json({ success: true, handled: true });
             } else {
@@ -1181,8 +1184,8 @@ router.post('/', async (req, res) => {
                     bookingDetails: { reason: visitReason }
                 });
                 
-                const deptButtons = clinicDepartments.slice(0, 3).map(dept => ({
-                    id: `dept_${dept.replace(/\s+/g, '_')}`,
+                const deptButtons = clinicDepartments.slice(0, 3).map((dept, idx) => ({
+                    id: String(idx + 1),
                     text: dept
                 }));
                 
@@ -1192,7 +1195,11 @@ router.post('/', async (req, res) => {
         }
         // SOP v2: Step 2 — Capturing Department
         else if (patient.currentFlowState === 'awaiting_department_selection') {
-            const department = patientMessage.replace(/^dept_/, '').replace(/_/g, ' ');
+            const clinicDepartments = getClinicDepartments(clinicData);
+            const deptIndex = parseInt(patientMessage.trim(), 10) - 1;
+            const department = (deptIndex >= 0 && deptIndex < clinicDepartments.length) 
+                ? clinicDepartments[deptIndex] 
+                : patientMessage.replace(/^dept_/, '').replace(/_/g, ' ');
             const visitReason = patient.bookingDetails?.reason || 'Consultation';
             
             const queueState = await queueService.getQueueState(clinicId, department);
@@ -1214,8 +1221,8 @@ router.post('/', async (req, res) => {
             });
             
             await sendButtons(chatId, responseText, [
-                { id: 'confirm_yes', text: '✅ Haan, Confirm' },
-                { id: 'confirm_no', text: '❌ Nahi, Cancel' }
+                { id: '1', text: '✅ Haan, Confirm' },
+                { id: '2', text: '❌ Nahi, Cancel' }
             ], clinicData?.clinic_info?.name || 'City Health Clinic');
             return res.status(200).json({ success: true, handled: true });
         }
@@ -1565,8 +1572,8 @@ router.post('/', async (req, res) => {
                             });
                             
                             await sendButtons(chatId, responseText, [
-                                { id: 'confirm_yes', text: 'Yes, Book it' },
-                                { id: 'confirm_no', text: 'No, search other' }
+                                { id: '1', text: 'Yes, Book it' },
+                                { id: '2', text: 'No, search other' }
                             ]);
                             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
                             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
@@ -1637,9 +1644,9 @@ router.post('/', async (req, res) => {
                         
                         // Add buttons for common reasons
                         await sendButtons(chatId, responseText, [
-                            { id: 'reason_fever', text: 'Fever/Cold' },
-                            { id: 'reason_consultation', text: 'General Consultation' },
-                            { id: 'reason_followup', text: 'Follow-up' }
+                            { id: '1', text: 'Fever/Cold' },
+                            { id: '2', text: 'General Consultation' },
+                            { id: '3', text: 'Follow-up' }
                         ], clinicData?.clinic_info?.name || 'City Health Clinic');
                         return res.status(200).json({ success: true, handled: true });
                     }
