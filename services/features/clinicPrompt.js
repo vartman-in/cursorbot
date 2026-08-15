@@ -55,6 +55,16 @@ Address: ${info.address || '15 Hospital Road, Udaipur, Rajasthan 313001'}
 Timings: ${info.timings || 'Mon-Sat: 09:00 AM - 08:00 PM, Sunday: Closed'}
 Contact Number: ${info.contact_number || '+91-9876543210'}
 
+Major Indian Festivals & Holidays (2026 Calendar):
+- Jan 26, 2026: Republic Day (Holiday / Special Hours)
+- Mar 03, 2026: Holi (Holiday)
+- Mar 31, 2026: Eid-ul-Fitr (Holiday)
+- Aug 15, 2026: Independence Day (Today - Holiday/Closed)
+- Oct 02, 2026: Gandhi Jayanti (Holiday)
+- Oct 20, 2026: Dussehra (Holiday)
+- Nov 08, 2026: Diwali (Holiday)
+- Dec 25, 2026: Christmas (Holiday)
+
 Doctors Available:
 ${docStr}
 

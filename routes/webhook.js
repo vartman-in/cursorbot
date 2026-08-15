@@ -110,6 +110,36 @@ function parseAppointmentDate(message, now = new Date()) {
     if (/\b(aaj|today)\b/.test(input)) return today;
     if (/\b(kal|tomorrow)\b/.test(input)) return addDaysIso(today, 1);
 
+    // Weekday & Relative Day mapping (e.g. "next saturday", "aagle shanivar", "sunday")
+    const weekdays = {
+        sunday: 0, ravivar: 0, ravivaar: 0, itwar: 0,
+        monday: 1, somvaar: 1, somwar: 1,
+        tuesday: 2, mangalvaar: 2, mangalwar: 2,
+        wednesday: 3, budhvaar: 3, budhwar: 3,
+        thursday: 4, guruvaar: 4, guruwar: 4,
+        friday: 5, shukravaar: 5, shukrawar: 5,
+        saturday: 6, shanivaar: 6, shaniwar: 6
+    };
+
+    const weekdayRegex = /\b(sunday|ravivar|ravivaar|itwar|monday|somvaar|somwar|tuesday|mangalvaar|mangalwar|wednesday|budhvaar|budhwar|thursday|guruvaar|guruwar|friday|shukravaar|shukrawar|saturday|shanivaar|shaniwar)\b/i;
+    const weekdayMatch = input.match(weekdayRegex);
+    if (weekdayMatch) {
+        const targetDayIndex = weekdays[weekdayMatch[1].toLowerCase()];
+        const currentDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+        const currentDayIndex = currentDate.getDay();
+        
+        let diff = targetDayIndex - currentDayIndex;
+        const isNext = /\b(next|aagla|aagle|upcoming)\b/.test(input);
+        
+        if (diff <= 0 || isNext) {
+            diff += 7;
+        }
+        
+        const targetDate = new Date(currentDate);
+        targetDate.setDate(currentDate.getDate() + diff);
+        return targetDate.toISOString().slice(0, 10);
+    }
+
     // Accept patient-friendly dates such as "12 August", "12 Aug 2026", and
     // "August 12". The date must still be validated by appointmentService
     // before a slot is shown or reserved.
