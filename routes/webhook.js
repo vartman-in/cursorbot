@@ -247,9 +247,9 @@ function wantsClinicalAppointment(message) {
 }
 
 function isAffirmative(message) {
-    const input = String(message || '').trim().toLowerCase();
-    // Support numerical IDs from buttons (1 is Haan/Confirm/Yes in all flows)
-    if (input === 'confirm_yes' || input === '1') return true;
+    const input = String(message || '').trim().toLowerCase().replace(/[.!]/g, '');
+    // Support numerical IDs or Poll Option names
+    if (input === 'confirm_yes' || input === '1' || input.includes('✅') || input.includes('confirm')) return true;
     return /^\s*(yes|y|haan|ha|han|ji|theek hai|thik hai|book|book karo|kar do)\s*[.!]?\s*$/i.test(input);
 }
 
@@ -258,8 +258,8 @@ function isAffirmative(message) {
 // never silently cancel a pending appointment.
 function isExplicitAppointmentCancellation(message) {
     const input = String(message || '').trim().toLowerCase().replace(/[.!]/g, '');
-    // Support numerical IDs from buttons (2 is Nahi/Cancel/No in all flows)
-    if (input === 'confirm_no' || input === '2') return true;
+    // Support numerical IDs or Poll Option names
+    if (input === 'confirm_no' || input === '2' || input.includes('❌') || input.includes('cancel')) return true;
     return /^(cancel|cancel appointment|cancel booking|booking cancel(?: karo)?|appointment cancel(?: karo)?|mujhe cancel karna hai|nahi chahiye)$/.test(input);
 }
 
@@ -514,7 +514,7 @@ router.post('/', async (req, res) => {
         const chatId = body.senderData.chatId;
         const senderPhone = body.senderData.sender;
         const messageData = body.messageData || {};
-        const patientMessage = 
+        let patientMessage = 
             messageData.textMessageData?.textMessage || 
             messageData.extendedTextMessageData?.text || 
             messageData.buttonsResponseMessageData?.selectedButtonId ||
@@ -523,6 +523,18 @@ router.post('/', async (req, res) => {
             messageData.listResponseMessageData?.title ||
             messageData.fileMessageData?.caption ||
             "";
+
+        // 🚀 SUPPORT FOR WHATSAPP POLLS (Modern alternative to buttons)
+        if (messageData.typeMessage === 'pollUpdateMessage') {
+            const pollData = messageData.pollMessageData;
+            const senderPhone = body.senderData.sender;
+            // Extract the option name selected by the user
+            const vote = pollData.votes.find(v => v.optionVoters && v.optionVoters.includes(senderPhone));
+            if (vote) {
+                patientMessage = vote.optionName;
+                logger.info(`[Webhook] Extracted poll vote from ${senderPhone}: "${patientMessage}"`);
+            }
+        }
 
         // 🚀 EXTRACT THE INSTANCE ID FOR THE MULTI-TENANT CONTEXT
         const instanceId = body.instanceData?.idInstance;

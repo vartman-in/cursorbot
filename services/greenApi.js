@@ -84,26 +84,55 @@ async function sendMediaByUrl(chatId, fileUrl, fileName, caption = "") {
 
 module.exports = {
     sendMediaByUrl,
-    sendMessage
+    sendMessage,
+    sendPoll,
+    getSettings,
+    setSettings
 };
 
 /**
- * Sends interactive buttons via Green API.
+ * Gets instance settings from Green API.
  */
-async function sendButtons(chatId, message, buttons, footer = "City Health Clinic") {
-    const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendButtons/${GREEN_API_API_TOKEN_INSTANCE}`;
-    
-    // Format buttons for Green API spec - simplified for maximum compatibility
-    const formattedButtons = buttons.map((btn, index) => ({
-        buttonId: String(btn.id || index + 1),
-        buttonText: btn.text
-    }));
+async function getSettings() {
+    const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/getSettings/${GREEN_API_API_TOKEN_INSTANCE}`;
+    try {
+        const response = await fetch(url);
+        return await response.json();
+    } catch (error) {
+        console.error("[Green API] Error in getSettings:", error.message);
+        return null;
+    }
+}
 
+/**
+ * Sets instance settings for Green API.
+ */
+async function setSettings(settings) {
+    const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/setSettings/${GREEN_API_API_TOKEN_INSTANCE}`;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        return await response.json();
+    } catch (error) {
+        console.error("[Green API] Error in setSettings:", error.message);
+        return null;
+    }
+}
+
+/**
+ * Sends a poll via Green API (Used as a robust alternative to buttons).
+ */
+async function sendPoll(chatId, message, options, multipleAnswers = false) {
+    const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendPoll/${GREEN_API_API_TOKEN_INSTANCE}`;
+    
     const payload = {
         chatId: chatId,
         message: message,
-        buttons: formattedButtons,
-        footer: footer || ""
+        options: options.map(opt => ({ optionName: opt })),
+        multipleAnswers: multipleAnswers
     };
 
     try {
@@ -114,17 +143,62 @@ async function sendButtons(chatId, message, buttons, footer = "City Health Clini
         });
 
         if (!response.ok) {
-            console.warn(`[Green API] sendButtons failed (${response.status}), falling back to text message.`);
-            return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
+            throw new Error(`Green API Poll Error: ${response.status} - ${response.statusText}`);
         }
 
         const data = await response.json();
-        console.log("[GreenAPI] Buttons Response:", data);
+        console.log("[GreenAPI] Poll Response:", data);
         return data;
     } catch (error) {
-        console.error("[Green API] Error in sendButtons:", error.message);
-        // Fallback to text message
-        return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
+        console.error("[Green API] Error in sendPoll:", error.message);
+        throw error;
+    }
+}
+
+/**
+ * Sends interactive buttons via Green API.
+ * Note: WhatsApp has deprecated legacy buttons on many versions. 
+ * We now use sendPoll as a more reliable alternative for quick replies.
+ */
+async function sendButtons(chatId, message, buttons, footer = "City Health Clinic") {
+    try {
+        // WhatsApp Polls are currently the most reliable way to show "buttons" on all devices
+        console.log(`[Green API] Using sendPoll as button alternative for ${chatId}`);
+        const pollOptions = buttons.map(btn => btn.text);
+        return await sendPoll(chatId, message, pollOptions);
+    } catch (error) {
+        console.warn(`[Green API] sendPoll failed, falling back to legacy sendButtons.`);
+        
+        const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendButtons/${GREEN_API_API_TOKEN_INSTANCE}`;
+        const formattedButtons = buttons.map((btn, index) => ({
+            buttonId: String(btn.id || index + 1),
+            buttonText: btn.text
+        }));
+
+        const payload = {
+            chatId: chatId,
+            message: message,
+            buttons: formattedButtons,
+            footer: footer || ""
+        };
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                console.warn(`[Green API] sendButtons failed (${response.status}), falling back to text message.`);
+                return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
+            }
+
+            return await response.json();
+        } catch (innerError) {
+            console.error("[Green API] Final fallback to text message:", innerError.message);
+            return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
+        }
     }
 }
 
