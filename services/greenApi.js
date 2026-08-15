@@ -98,14 +98,15 @@ async function sendButtons(chatId, message, buttons, footer = "City Health Clini
         buttonId: btn.id || String(index + 1),
         buttonText: {
             displayText: btn.text
-        }
+        },
+        type: 1 // Quick Reply button
     }));
 
     const payload = {
         chatId: chatId,
         message: message,
         buttons: formattedButtons,
-        footer: footer
+        footer: footer || ""
     };
 
     try {
@@ -138,9 +139,9 @@ async function sendListMessage(chatId, message, title, buttonText, sections, foo
 
     // Ensure sections and rows follow Green API's expected structure
     const formattedSections = (sections || []).map(section => ({
-        title: section.title,
+        title: section.title || "Options",
         rows: (section.rows || []).map(row => ({
-            rowId: row.rowId || row.id,
+            rowId: String(row.rowId || row.id),
             title: row.title,
             description: row.description || ""
         }))
@@ -149,10 +150,10 @@ async function sendListMessage(chatId, message, title, buttonText, sections, foo
     const payload = {
         chatId: chatId,
         message: message,
-        title: title,
-        buttonText: buttonText,
+        title: title || "Select an option",
+        buttonText: buttonText || "Select",
         sections: formattedSections,
-        footer: footer
+        footer: footer || ""
     };
 
     try {
