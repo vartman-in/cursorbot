@@ -540,38 +540,44 @@ router.post('/', async (req, res) => {
         
         let patientMessage = "";
 
-        // 🚀 HANDLE MODERN INTERACTIVE BUTTONS & POLL VOTES
+        // 🚀 DEEP EXTRACTION LOGIC FOR BUTTONS & POLLS
+        // We scan all possible Green API button reply structures to ensure no click is missed.
         if (body.typeWebhook === 'pollUpdateMessage' && body.pollUpdateMessageData) {
             const pollUpdateData = body.pollUpdateMessageData;
             if (pollUpdateData.votes && Array.isArray(pollUpdateData.votes)) {
                 const vote = pollUpdateData.votes.find(v => v.optionVoters && v.optionVoters.includes(senderPhone));
-                if (vote) {
-                    patientMessage = vote.optionName;
-                    logger.info(`[Webhook] Extracted poll vote from ${senderPhone}: "${patientMessage}"`);
-                }
+                if (vote) patientMessage = vote.optionName;
             }
-        } else if (messageData.typeMessage === 'interactiveButtonsReply' && messageData.interactiveButtonsReply) {
-            // Prefer text for LLM/Classifier, fallback to ID
-            patientMessage = messageData.interactiveButtonsReply.buttonText || messageData.interactiveButtonsReply.buttonId;
-            logger.info(`[Webhook] Extracted interactiveButtonsReply from ${senderPhone}: "${patientMessage}"`);
-        } else if (messageData.typeMessage === 'buttonsResponseMessage' || messageData.buttonsResponseMessageData) {
-            const btnData = messageData.buttonsResponseMessageData || messageData.buttonsResponseMessage;
-            patientMessage = btnData.selectedDisplayText || btnData.selectedButtonText || btnData.selectedButtonId || "";
-            logger.info(`[Webhook] Extracted buttonsResponseMessage from ${senderPhone}: "${patientMessage}"`);
-        } else if (messageData.typeMessage === 'templateButtonsReplyMessage' && messageData.templateButtonReplyMessage) {
-            patientMessage = messageData.templateButtonReplyMessage.selectedDisplayText || messageData.templateButtonReplyMessage.selectedId;
-            logger.info(`[Webhook] Extracted templateButtonsReplyMessage from ${senderPhone}: "${patientMessage}"`);
-        } else if (messageData.typeMessage === 'listResponseMessage' || messageData.listResponseMessageData) {
-            const listData = messageData.listResponseMessageData || messageData.listResponseMessage;
-            patientMessage = listData.title || listData.selectedRowId || "";
-            logger.info(`[Webhook] Extracted listResponseMessage from ${senderPhone}: "${patientMessage}"`);
-        } else {
-            // Standard message extraction
+        } 
+        
+        // If not a poll, check all button reply formats
+        if (!patientMessage) {
             patientMessage = 
+                // Modern Interactive Buttons
+                messageData.interactiveButtonsReply?.buttonText || 
+                messageData.interactiveButtonsReply?.buttonId ||
+                // Legacy Buttons Response
+                messageData.buttonsResponseMessageData?.selectedDisplayText ||
+                messageData.buttonsResponseMessageData?.selectedButtonId ||
+                messageData.buttonsResponseMessage?.selectedButtonText ||
+                messageData.buttonsResponseMessage?.selectedButtonId ||
+                // Template Buttons
+                messageData.templateButtonReplyMessage?.selectedDisplayText ||
+                messageData.templateButtonReplyMessage?.selectedId ||
+                // List/Menu Responses
+                messageData.listResponseMessageData?.title ||
+                messageData.listResponseMessageData?.selectedRowId ||
+                messageData.listResponseMessage?.title ||
+                messageData.listResponseMessage?.selectedRowId ||
+                // Standard Text
                 messageData.textMessageData?.textMessage || 
                 messageData.extendedTextMessageData?.text || 
                 messageData.fileMessageData?.caption ||
                 "";
+        }
+
+        if (patientMessage) {
+            logger.info(`[Webhook] Extracted message from ${senderPhone} (Type: ${messageData.typeMessage || body.typeWebhook}): "${patientMessage.slice(0, 50)}"`);
         }
 
         // 🚀 MAP NUMERIC BUTTON IDS TO INTENTS (Fallback for ID-only replies)
