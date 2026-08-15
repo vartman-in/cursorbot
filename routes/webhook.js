@@ -28,6 +28,19 @@ function getStaticClinicResponse(intent, clinicData, liveStatus = null) {
 
     return templates[intent] || templates["general_query"];
 }
+
+/**
+ * Sends a message with the standard 3 interactive buttons.
+ */
+async function sendMenuButtons(chatId, text, clinicName = 'City Health Clinic') {
+    const buttons = [
+        { id: '1', text: '📅 Token book karein' },
+        { id: '2', text: '🎫 Token status check karein' },
+        { id: '3', text: '⏰ Timings, fees & location' }
+    ];
+    return await sendButtons(chatId, text, buttons, clinicName);
+}
+
 const { sendMessage, sendButtons, sendListMessage } = require('../services/greenApi');
 const { alertStaff } = require('../services/adminAlertService');
 const { parseAdminCommand } = require('../services/features/adminsystemprompt');
@@ -691,7 +704,7 @@ router.post('/', async (req, res) => {
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: handoffNotice });
             
-            await sendMessage(chatId, handoffNotice);
+            await sendMenuButtons(chatId, handoffNotice, clinicData?.clinic_info?.name);
             return;
         }
 
@@ -705,7 +718,7 @@ router.post('/', async (req, res) => {
             await patients.createOrUpdate(chatId, { communicationConsent: false, consentUpdatedAt: new Date() });
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
-            await sendMessage(chatId, responseText);
+            await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
             return;
         }
         if (/^\s*(start|subscribe)\s*$/i.test(patientMessage)) {
@@ -713,7 +726,7 @@ router.post('/', async (req, res) => {
             await patients.createOrUpdate(chatId, { communicationConsent: true, consentUpdatedAt: new Date() });
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
-            await sendMessage(chatId, responseText);
+            await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
             return;
         }
         logger.info(`[Webhook] Recognized returning patient: ${patientName} (${chatId})`);
@@ -781,7 +794,7 @@ router.post('/', async (req, res) => {
             
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
-            await sendMessage(chatId, responseText);
+            await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
             return res.status(200).json({ success: true, handled: true, tier: 3 });
         }
 
@@ -803,7 +816,7 @@ router.post('/', async (req, res) => {
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: cancellationText });
             await patients.updateFlowState(chatId, 'idle');
             await patients.createOrUpdate(chatId, { pendingAppointmentOffer: null, bookingDetails: null });
-            await sendMessage(chatId, cancellationText);
+            await sendMenuButtons(chatId, cancellationText, clinicData?.clinic_info?.name);
             return;
         }
 
@@ -847,7 +860,7 @@ router.post('/', async (req, res) => {
                 responseText = staticTemplates[intent];
                 await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
                 await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
-                await sendMessage(chatId, responseText);
+                await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
                 return res.status(200).json({ success: true, handled: true, tier: 1 });
             }
         }
@@ -929,7 +942,7 @@ router.post('/', async (req, res) => {
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
 
-            await sendMessage(chatId, responseText);
+            await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
             logger.info(`[Webhook] Triage safety response sent to ${chatId} (level: ${safetyScreen.level}). Halted further processing.`);
             return res.status(200).json({ success: true, handled: true, triageLevel: safetyScreen.level });
         }
@@ -947,7 +960,7 @@ router.post('/', async (req, res) => {
             await alertStaff(chatId, patientName, 'Human handoff requested', transcript, targetClinicId);
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
-            await sendMessage(chatId, responseText);
+            await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
             return res.status(200).json({ success: true, handled: true, handoff: true });
         }
 
@@ -1810,7 +1823,12 @@ router.post('/', async (req, res) => {
         await patients.updateFlowState(chatId, nextState);
 
         // 7. Send Response via Green API
-        await sendMessage(chatId, responseText);
+        // For dynamic AI responses, we append the menu buttons to ensure the user always has clear options.
+        if (nextState === 'idle') {
+            await sendMenuButtons(chatId, responseText, clinicData?.clinic_info?.name);
+        } else {
+            await sendMessage(chatId, responseText);
+        }
         logger.info(`[Webhook] Response sent to ${chatId}`);
 
     } catch (error) {

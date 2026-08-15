@@ -285,6 +285,22 @@
       "metadata": {},
       "requestId": "req-smoke-test-001",
       "createdAt": "2026-08-15T18:04:21.884Z"
+    },
+    "auto_jbsh2rx1p": {
+      "clinicId": "clinic-01",
+      "action": "queue.advance",
+      "actor": {
+        "id": "frontdesk@test.example",
+        "email": "frontdesk@test.example",
+        "role": "receptionist"
+      },
+      "target": {
+        "queueDate": "2026-08-10",
+        "department": "General Medicine"
+      },
+      "metadata": {},
+      "requestId": "req-smoke-test-001",
+      "createdAt": "2026-08-15T18:39:41.915Z"
     }
   }
 }
