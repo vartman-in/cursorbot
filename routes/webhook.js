@@ -517,20 +517,22 @@ router.post('/', async (req, res) => {
         
         let patientMessage = "";
 
-        // 🚀 HANDLE WHATSAPP POLL VOTES (Modern alternative to buttons)
+        // 🚀 HANDLE MODERN INTERACTIVE BUTTONS & POLL VOTES
         if (body.typeWebhook === 'pollUpdateMessage' && body.pollUpdateMessageData) {
             const pollUpdateData = body.pollUpdateMessageData;
-            // Extract the option name selected by the user
-            // In a single-choice poll, we look for the option the sender voted for
             if (pollUpdateData.votes && Array.isArray(pollUpdateData.votes)) {
-                const vote = pollUpdateData.votes.find(v => 
-                    v.optionVoters && v.optionVoters.includes(senderPhone)
-                );
+                const vote = pollUpdateData.votes.find(v => v.optionVoters && v.optionVoters.includes(senderPhone));
                 if (vote) {
                     patientMessage = vote.optionName;
                     logger.info(`[Webhook] Extracted poll vote from ${senderPhone}: "${patientMessage}"`);
                 }
             }
+        } else if (messageData.typeMessage === 'interactiveButtonsReply' && messageData.interactiveButtonsReply) {
+            patientMessage = messageData.interactiveButtonsReply.buttonId || messageData.interactiveButtonsReply.buttonText;
+            logger.info(`[Webhook] Extracted interactiveButtonsReply from ${senderPhone}: "${patientMessage}"`);
+        } else if (messageData.typeMessage === 'templateButtonsReplyMessage' && messageData.templateButtonReplyMessage) {
+            patientMessage = messageData.templateButtonReplyMessage.selectedId || messageData.templateButtonReplyMessage.selectedDisplayText;
+            logger.info(`[Webhook] Extracted templateButtonsReplyMessage from ${senderPhone}: "${patientMessage}"`);
         } else {
             // Standard message extraction
             patientMessage = 
