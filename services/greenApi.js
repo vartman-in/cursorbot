@@ -151,14 +151,17 @@ async function sendInteractiveButtonsReply(chatId, body, buttons, header = "", f
     
     const payload = {
         chatId: chatId,
-        header: header || "",
         body: body,
-        footer: footer || "",
+        footer: footer || "City Health Clinic",
         buttons: buttons.map((btn, index) => ({
             buttonId: String(btn.id || index + 1),
             buttonText: btn.text
         }))
     };
+    
+    if (header && header.trim() !== "") {
+        payload.header = header;
+    }
 
     try {
         const response = await fetch(url, {

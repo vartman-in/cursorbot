@@ -5,6 +5,29 @@ const express = require('express');
 const router = express.Router();
 const { patients, knowledgeBase, appointments } = require('../services/databaseService');
 const { generateResponse, classifyIntent } = require('../services/features/aiIntegration');
+
+/**
+ * Provides a static fallback response for common clinic queries to save tokens or handle LLM failures.
+ */
+function getStaticClinicResponse(intent, clinicData, liveStatus = null) {
+    const info = clinicData?.clinic_info || {};
+    const address = info.address || '15 Hospital Road, Udaipur';
+    const timings = info.timings || 'Mon-Sat: 09:00 AM - 08:00 PM, Sunday: Closed';
+    const name = info.name || 'City Health Clinic';
+
+    const templates = {
+        "greeting": `Namastey! 🙏 Welcome to ${name}. Main aapki kaise madad kar sakti hoon?\n\n1. 📅 Token book karein\n2. 🎫 Token status check karein\n3. ⏰ Timings & Location`,
+        "clinic_address": `Humara address hai: ${address}.`,
+        "check_status": liveStatus 
+            ? `Aapka Token #${liveStatus.tokenNumber} hai. Currently serving: #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} mins.`
+            : "Aapka koi active token nahi hai. Kya aap appointment book karna chahte hain?",
+        "general_query": `Namastey! Humara address: ${address}.\nConsultation timings: ${timings}.\nFees aur services ki jaankari ke liye aap clinic visit kar sakte hain.`,
+        "timings_fees_location": `Address: ${address}\nTimings: ${timings}\nFees: Consultation fees clinic par check karein.`,
+        "check_availability": `Clinic timings: ${timings}. Appointments ke liye kripya date aur time bhejein.`
+    };
+
+    return templates[intent] || templates["general_query"];
+}
 const { sendMessage, sendButtons, sendListMessage } = require('../services/greenApi');
 const { alertStaff } = require('../services/adminAlertService');
 const { parseAdminCommand } = require('../services/features/adminsystemprompt');
@@ -761,7 +784,7 @@ router.post('/', async (req, res) => {
         
         // TIER 1: Pre-fixed Administrative (Priority 2)
         // Note: check_availability is moved to Tier 2 for generative temporal reasoning
-        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'clinic_address', 'check_status', 'general_query'].includes(intent))) {
+        if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'clinic_address', 'check_status', 'general_query', 'timings_fees_location'].includes(intent))) {
             if (intent === 'greeting') {
                 responseText = `Namaste, ${patientName}! 🙏 Wapas swagat hai. Aaj main aapki kaise madad kar sakti hoon?\n\n` +
                     `*Options:*\n` +
@@ -784,7 +807,8 @@ router.post('/', async (req, res) => {
                 "check_status": liveStatus 
                     ? `Aapka Token #${liveStatus.tokenNumber} hai. Currently serving: #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} mins.`
                     : "Aapka koi active token nahi hai. Kya aap appointment book karna chahte hain?",
-                "general_query": `Namastey! Aap clinic ke fees, services, ya location ke baare mein puch sakte hain. Humara address: ${clinicData?.clinic_info?.address || '15 Hospital Road'}. Consultation timings: ${clinicData?.clinic_info?.timings || '9 AM - 8 PM'}.`
+                "general_query": `Namastey! Aap clinic ke fees, services, ya location ke baare mein puch sakte hain. Humara address: ${clinicData?.clinic_info?.address || '15 Hospital Road'}. Consultation timings: ${clinicData?.clinic_info?.timings || '9 AM - 8 PM'}.`,
+                "timings_fees_location": `Humara address: ${clinicData?.clinic_info?.address || '15 Hospital Road'}.\nConsultation timings: ${clinicData?.clinic_info?.timings || '9 AM - 8 PM'}.\nFees aur services ki jaankari ke liye aap clinic visit kar sakte hain.`
             };
 
             if (staticTemplates[intent]) {
@@ -1353,10 +1377,15 @@ router.post('/', async (req, res) => {
 
         // General Query (address, fees, directions, contact info)
         else if (intent === 'general_query') {
-            const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
-            history.push({ role: 'user', content: patientMessage });
-            const liveStatusText = `The patient is asking a general inquiry (address, fees, directions, or contact info). Answer helpfully in polite Hinglish using clinic details.`;
-            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
+            try {
+                const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
+                history.push({ role: 'user', content: patientMessage });
+                const liveStatusText = `The patient is asking a general inquiry (address, fees, directions, or contact info). Answer helpfully in polite Hinglish using clinic details.`;
+                responseText = await generateResponse(history, instanceId, clinicData, liveStatusText);
+            } catch (err) {
+                logger.warn(`[Webhook] generateResponse failed for general_query, using static fallback: ${err.message}`);
+                responseText = getStaticClinicResponse('general_query', clinicData);
+            }
             nextState = patient.currentFlowState;
         }
 
@@ -1701,16 +1730,21 @@ router.post('/', async (req, res) => {
         // numbers from old conversation history (this was a real bug: patients
         // were told about appointments/delays that were no longer accurate).
         else {
-            const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
-            history.push({ role: 'user', content: patientMessage });
-            
-            const liveStatusText = liveStatus
-                ? `The patient CURRENTLY has an active Token #${liveStatus.tokenNumber} for ${liveStatus.department} today. ` +
-                  `Now serving #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} min. ` +
-                  `Only use these exact numbers if you mention their appointment — never invent or recall different figures from earlier in the conversation.`
-                : `The patient does NOT currently have any active token or appointment. If earlier conversation history mentions one, it is no longer valid — do not reference old token numbers, wait times, or delays as if still current.`;
+            try {
+                const history = (patient.conversationHistory || []).map(m => ({ role: m.role, content: m.content }));
+                history.push({ role: 'user', content: patientMessage });
+                
+                const liveStatusText = liveStatus
+                    ? `The patient CURRENTLY has an active Token #${liveStatus.tokenNumber} for ${liveStatus.department} today. ` +
+                      `Now serving #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} min. ` +
+                      `Only use these exact numbers if you mention their appointment — never invent or recall different figures from earlier in the conversation.`
+                    : `The patient does NOT currently have any active token or appointment. If earlier conversation history mentions one, it is no longer valid — do not reference old token numbers, wait times, or delays as if still current.`;
 
-            responseText = await generateResponse(history, instanceId, clinicData, liveStatusText, 'general_query');
+                responseText = await generateResponse(history, instanceId, clinicData, liveStatusText, 'general_query');
+            } catch (err) {
+                logger.warn(`[Webhook] generateResponse failed in catch-all, using static fallback: ${err.message}`);
+                responseText = getStaticClinicResponse('general_query', clinicData, liveStatus);
+            }
         }
 
         // Keep the safety guidance visible while still allowing a valid

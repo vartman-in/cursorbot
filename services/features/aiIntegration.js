@@ -53,9 +53,12 @@ Clinic Context:
 ${clinicContextStr}
 ${extraContext ? `\nAdditional Context:\n${extraContext}` : ''}`;
 
+        // Limit history to last 5 messages to prevent 413 "Payload Too Large" errors
+        const limitedHistory = history.slice(-5);
+        
         const formattedMessages = [
             { role: "system", content: systemPrompt },
-            ...history.map(m => ({
+            ...limitedHistory.map(m => ({
                 role: m.role === "assistant" ? "assistant" : "user",
                 content: typeof m.content === "string" ? m.content : JSON.stringify(m.content)
             }))
@@ -85,8 +88,10 @@ ${extraContext ? `\nAdditional Context:\n${extraContext}` : ''}`;
  * Classify the intent of an incoming patient message, supporting multi-intent arrays and contextual confirmation.
  */
 async function classifyIntent(message, history = []) {
-    const historyBlock = history.length
-        ? `Recent conversation context (pay attention to what the bot just asked):\n${history.map(m => {
+    // Limit history context to last 3 messages for classification to save tokens
+    const limitedHistoryForClassification = history.slice(-3);
+    const historyBlock = limitedHistoryForClassification.length
+        ? `Recent conversation context (pay attention to what the bot just asked):\n${limitedHistoryForClassification.map(m => {
             const contentStr = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
             return `${m.role}: ${contentStr}`;
           }).join("\n")}\n\n`
@@ -104,10 +109,10 @@ TIER 1: Pre-fixed Administrative (Standard queries)
 - "clinic_address": Location, directions (e.g., "clinic kahan hai", "address bhejo").
 - "book_appointment": Explicit booking/token request (e.g., "number laga do", "appointment chahiye").
 - "check_status": Queue position, wait time (e.g., "token status kya hai").
+- "general_query": Fees, specific services, parking, insurance, timings (e.g., "X-ray hota hai?", "fees kitni hai", "timings kya hai").
 
 TIER 2: Generative Reasoning (Complex or multi-part)
-- "check_availability": Timings, open/closed, doctor schedule, or specific date availability (e.g., "kab baithte hain", "kal open hai kya", "16 august ko khula hai").
-- "general_query": Fees, specific services, parking, insurance (e.g., "X-ray hota hai?", "fees kitni hai").
+- "check_availability": Specific date availability or doctor-specific schedule (e.g., "kal open hai kya", "16 august ko khula hai", "Dr. Gupta kab aayenge").
 - "report_status": PDF reports, lab results, turnaround time (e.g., "report kab tak aayegi").
 - "cancel_or_correct": Cancellations, correcting bot mistakes (e.g., "cancel kar do", "maine nahi bola").
 - "confirmation": Affirmations to bot questions (e.g., "haan", "thik hai").
