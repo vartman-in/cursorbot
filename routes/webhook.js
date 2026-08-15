@@ -585,7 +585,11 @@ router.post('/', async (req, res) => {
             const cleanedName = patientMessage.trim();
             await patients.createOrUpdate(chatId, { name: cleanedName });
             
-            responseText = `Namaste, ${cleanedName}! 🙏 City Health Clinic mein aapka swagat hai. Aaj main aapki kaise madad kar sakti hoon?`;
+            responseText = `Namaste, ${cleanedName}! 🙏 City Health Clinic mein aapka swagat hai. Aaj main aapki kaise madad kar sakti hoon?\n\n` +
+                `*Options:*\n` +
+                `1. 📅 Token book karein\n` +
+                `2. 🎫 Token status check karein\n` +
+                `3. ⏰ Timings, fees & location`;
             
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
@@ -737,7 +741,11 @@ router.post('/', async (req, res) => {
         // Note: check_availability is moved to Tier 2 for generative temporal reasoning
         if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'clinic_address', 'check_status', 'general_query'].includes(intent))) {
             if (intent === 'greeting') {
-                responseText = `Namaste, ${patientName}! 🙏 Wapas swagat hai. Aaj main aapki kaise madad kar sakti hoon?`;
+                responseText = `Namaste, ${patientName}! 🙏 Wapas swagat hai. Aaj main aapki kaise madad kar sakti hoon?\n\n` +
+                    `*Options:*\n` +
+                    `1. 📅 Token book karein\n` +
+                    `2. 🎫 Token status check karein\n` +
+                    `3. ⏰ Timings, fees & location`;
                 await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
                 await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
                 
@@ -1163,7 +1171,9 @@ router.post('/', async (req, res) => {
                     `📝 *Reason:* ${visitReason}\n` +
                     `👥 *Abhi line mein:* ${peopleAhead} log aapse pehle hain\n` +
                     `⏳ *Andaazan wait:* ~${estimatedWait} min\n\n` +
-                    `Kya main aapka token confirm kar doon?`;
+                    `Kya main aapka token confirm kar doon?\n\n` +
+                    `1. ✅ Haan, Confirm\n` +
+                    `2. ❌ Nahi, Cancel`;
                 
                 nextState = 'awaiting_live_token_confirmation';
                 await patients.createOrUpdate(chatId, { 
@@ -1177,7 +1187,9 @@ router.post('/', async (req, res) => {
                 ], clinicData?.clinic_info?.name || 'City Health Clinic');
                 return res.status(200).json({ success: true, handled: true });
             } else {
-                responseText = `Aapko kis department mein dikhana hai?`;
+                responseText = `Aapko kis department mein dikhana hai?\n\n` +
+                    `*Departments:*\n` +
+                    clinicDepartments.slice(0, 3).map((dept, idx) => `${idx + 1}. ${dept}`).join('\n');
                 nextState = 'awaiting_department_selection';
                 await patients.createOrUpdate(chatId, { 
                     currentFlowState: nextState,
@@ -1212,7 +1224,9 @@ router.post('/', async (req, res) => {
                 `📝 *Reason:* ${visitReason}\n` +
                 `👥 *Abhi line mein:* ${peopleAhead} log aapse pehle hain\n` +
                 `⏳ *Andaazan wait:* ~${estimatedWait} min\n\n` +
-                `Kya main aapka token confirm kar doon?`;
+                `Kya main aapka token confirm kar doon?\n\n` +
+                `1. ✅ Haan, Confirm\n` +
+                `2. ❌ Nahi, Cancel`;
             
             nextState = 'awaiting_live_token_confirmation';
             await patients.createOrUpdate(chatId, { 
@@ -1564,7 +1578,9 @@ router.post('/', async (req, res) => {
                         });
                         if (offer) {
                             const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
-                            responseText = `📅 Next available appointment for ${department}${docLabel} is on ${formatIsoDateForPatient(offer.date)} at ${displaySlot(offer.time)}. Would you like to book this slot?`;
+                            responseText = `📅 Next available appointment for ${department}${docLabel} is on ${formatIsoDateForPatient(offer.date)} at ${displaySlot(offer.time)}. Would you like to book this slot?\n\n` +
+                                `1. Yes, Book it\n` +
+                                `2. No, search other`;
                             nextState = 'awaiting_appointment_confirmation';
                             await patients.createOrUpdate(chatId, {
                                 bookingDetails: null,
@@ -1635,7 +1651,11 @@ router.post('/', async (req, res) => {
                         logger.info(`[Booking] Routed future-date request for ${chatId} during open hours: ${date} (${department}).`);
                     } else {
                         // SOP v2: Live Token flow — Step 2 (Reason for Visit)
-                        responseText = `Main aapka aaj ka token book kar sakti hoon. Kripya batayein, aap doctor ko kis wajah se dikhana chahte hain? (Short mein batayein, jaise "Fever", "Back pain", etc.)`;
+                        responseText = `Main aapka aaj ka token book kar sakti hoon. Kripya batayein, aap doctor ko kis wajah se dikhana chahte hain? (Short mein batayein, jaise "Fever", "Back pain", etc.)\n\n` +
+                            `*Common Reasons:*\n` +
+                            `1. Fever/Cold\n` +
+                            `2. General Consultation\n` +
+                            `3. Follow-up`;
                         nextState = 'awaiting_visit_reason';
                         await patients.createOrUpdate(chatId, { 
                             currentFlowState: nextState, 
