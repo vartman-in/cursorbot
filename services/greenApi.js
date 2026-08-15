@@ -3,7 +3,11 @@ require('dotenv').config();
 
 const GREEN_API_ID_INSTANCE = process.env.INSTANCE_ID || process.env.GREEN_API_INSTANCE_ID || process.env.GREEN_API_ID_INSTANCE;
 const GREEN_API_API_TOKEN_INSTANCE = process.env.INSTANCE_TOKEN || process.env.GREEN_API_TOKEN || process.env.GREEN_API_API_TOKEN_INSTANCE;
-const GREEN_API_HOST = process.env.GREEN_API_HOST || 'https://api.green-api.com';
+
+// Resilient host detection: Green API uses cluster-specific subdomains (e.g., 7103, 7107)
+// We extract the first 4 digits of the instance ID to determine the correct cluster.
+const clusterId = String(GREEN_API_ID_INSTANCE || '').substring(0, 4);
+const GREEN_API_HOST = process.env.GREEN_API_HOST || (clusterId ? `https://${clusterId}.api.greenapi.com` : 'https://api.green-api.com');
 
 /**
  * Sends a standard text message via Green API.
