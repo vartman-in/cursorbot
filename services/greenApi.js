@@ -93,13 +93,10 @@ module.exports = {
 async function sendButtons(chatId, message, buttons, footer = "City Health Clinic") {
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendButtons/${GREEN_API_API_TOKEN_INSTANCE}`;
     
-    // Format buttons for Green API spec
+    // Format buttons for Green API spec - simplified for maximum compatibility
     const formattedButtons = buttons.map((btn, index) => ({
-        buttonId: btn.id || String(index + 1),
-        buttonText: {
-            displayText: btn.text
-        },
-        type: 1 // Quick Reply button
+        buttonId: String(btn.id || index + 1),
+        buttonText: btn.text
     }));
 
     const payload = {
