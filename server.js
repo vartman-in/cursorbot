@@ -112,12 +112,28 @@ app.use((err, req, res, next) => {
 require('./jobs/reminderJob');
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`🚀 AI Receptionist Server started on port ${PORT}`);
     console.log(`   Admin API:        POST /admin/onboard-clinic`);
     console.log(`   WhatsApp Webhook: POST /webhook`);
     console.log(`   Dashboard APIs:   /api/doctor & /api/patient`);
     console.log(`   Health Check:     GET  /health`);
+
+    // Auto-configure Green API for Poll Support on startup
+    try {
+        const greenApi = require('./services/greenApi');
+        console.log('[Green API] Verifying poll settings...');
+        const settings = await greenApi.getSettings();
+        if (settings && settings.pollMessageWebhook !== 'yes') {
+            console.log('[Green API] Enabling pollMessageWebhook for interactive interaction...');
+            await greenApi.setSettings({ pollMessageWebhook: 'yes' });
+            console.log('[Green API] Poll settings updated successfully.');
+        } else if (settings) {
+            console.log('[Green API] Poll settings are already optimal.');
+        }
+    } catch (error) {
+        console.warn(`[Green API] Auto-config failed: ${error.message}`);
+    }
 });
 
 module.exports = app;
