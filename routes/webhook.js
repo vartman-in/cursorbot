@@ -506,34 +506,42 @@ router.post('/', async (req, res) => {
     try {
         const body = req.body;
         
-        // Skip messages we sent or system events
-        if (body.typeWebhook !== 'incomingMessageReceived') {
+        // Skip messages we sent or system events (Allow incoming messages and poll updates)
+        if (body.typeWebhook !== 'incomingMessageReceived' && body.typeWebhook !== 'pollUpdateMessage') {
             return;
         }
 
         const chatId = body.senderData.chatId;
         const senderPhone = body.senderData.sender;
         const messageData = body.messageData || {};
-        let patientMessage = 
-            messageData.textMessageData?.textMessage || 
-            messageData.extendedTextMessageData?.text || 
-            messageData.buttonsResponseMessageData?.selectedButtonId ||
-            messageData.buttonsResponseMessageData?.selectedButtonText ||
-            messageData.listResponseMessageData?.selectedRowId ||
-            messageData.listResponseMessageData?.title ||
-            messageData.fileMessageData?.caption ||
-            "";
+        
+        let patientMessage = "";
 
-        // 🚀 SUPPORT FOR WHATSAPP POLLS (Modern alternative to buttons)
-        if (messageData.typeMessage === 'pollUpdateMessage') {
-            const pollData = messageData.pollMessageData;
-            const senderPhone = body.senderData.sender;
+        // 🚀 HANDLE WHATSAPP POLL VOTES (Modern alternative to buttons)
+        if (body.typeWebhook === 'pollUpdateMessage' && body.pollUpdateMessageData) {
+            const pollUpdateData = body.pollUpdateMessageData;
             // Extract the option name selected by the user
-            const vote = pollData.votes.find(v => v.optionVoters && v.optionVoters.includes(senderPhone));
-            if (vote) {
-                patientMessage = vote.optionName;
-                logger.info(`[Webhook] Extracted poll vote from ${senderPhone}: "${patientMessage}"`);
+            // In a single-choice poll, we look for the option the sender voted for
+            if (pollUpdateData.votes && Array.isArray(pollUpdateData.votes)) {
+                const vote = pollUpdateData.votes.find(v => 
+                    v.optionVoters && v.optionVoters.includes(senderPhone)
+                );
+                if (vote) {
+                    patientMessage = vote.optionName;
+                    logger.info(`[Webhook] Extracted poll vote from ${senderPhone}: "${patientMessage}"`);
+                }
             }
+        } else {
+            // Standard message extraction
+            patientMessage = 
+                messageData.textMessageData?.textMessage || 
+                messageData.extendedTextMessageData?.text || 
+                messageData.buttonsResponseMessageData?.selectedButtonId ||
+                messageData.buttonsResponseMessageData?.selectedButtonText ||
+                messageData.listResponseMessageData?.selectedRowId ||
+                messageData.listResponseMessageData?.title ||
+                messageData.fileMessageData?.caption ||
+                "";
         }
 
         // 🚀 EXTRACT THE INSTANCE ID FOR THE MULTI-TENANT CONTEXT
