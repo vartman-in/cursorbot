@@ -552,32 +552,48 @@ router.post('/', async (req, res) => {
         
         // If not a poll, check all button reply formats
         if (!patientMessage) {
+            // 1. Check known structures
             patientMessage = 
-                // Modern Interactive Buttons
                 messageData.interactiveButtonsReply?.buttonText || 
                 messageData.interactiveButtonsReply?.buttonId ||
-                // Legacy Buttons Response
                 messageData.buttonsResponseMessageData?.selectedDisplayText ||
                 messageData.buttonsResponseMessageData?.selectedButtonId ||
                 messageData.buttonsResponseMessage?.selectedButtonText ||
                 messageData.buttonsResponseMessage?.selectedButtonId ||
-                // Template Buttons
                 messageData.templateButtonReplyMessage?.selectedDisplayText ||
                 messageData.templateButtonReplyMessage?.selectedId ||
-                // List/Menu Responses
                 messageData.listResponseMessageData?.title ||
                 messageData.listResponseMessageData?.selectedRowId ||
                 messageData.listResponseMessage?.title ||
                 messageData.listResponseMessage?.selectedRowId ||
-                // Standard Text
                 messageData.textMessageData?.textMessage || 
                 messageData.extendedTextMessageData?.text || 
                 messageData.fileMessageData?.caption ||
                 "";
+
+            // 2. Aggressive Recursive Search (Catch-all for new Green API formats)
+            if (!patientMessage && messageData) {
+                const searchKeys = ['buttonText', 'selectedButtonId', 'selectedDisplayText', 'title', 'text', 'buttonId', 'selectedRowId', 'displayText'];
+                const recursiveSearch = (obj) => {
+                    if (!obj || typeof obj !== 'object') return null;
+                    for (const key of Object.keys(obj)) {
+                        if (searchKeys.includes(key) && typeof obj[key] === 'string' && obj[key].trim()) return obj[key];
+                        const found = recursiveSearch(obj[key]);
+                        if (found) return found;
+                    }
+                    return null;
+                };
+                patientMessage = recursiveSearch(messageData) || "";
+            }
         }
 
         if (patientMessage) {
             logger.info(`[Webhook] Extracted message from ${senderPhone} (Type: ${messageData.typeMessage || body.typeWebhook}): "${patientMessage.slice(0, 50)}"`);
+        } else {
+            // LOG RAW BODY FOR DEBUGGING IF EXTRACTION FAILS
+            logger.warn(`[Webhook] EXTRACTION FAILED for ${senderPhone}. Type: ${body.typeWebhook}. Raw Keys: ${Object.keys(body).join(', ')}. MsgData Keys: ${Object.keys(messageData).join(', ')}`);
+            // We log a small snippet of the body to identify the structure without flooding logs
+            logger.info(`[Webhook] Raw Body Snippet: ${JSON.stringify(body).slice(0, 500)}`);
         }
 
         // 🚀 MAP NUMERIC BUTTON IDS TO INTENTS (Fallback for ID-only replies)
