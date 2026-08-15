@@ -583,17 +583,17 @@ router.post('/', async (req, res) => {
             const cleanedName = patientMessage.trim();
             await patients.createOrUpdate(chatId, { name: cleanedName });
             
-            responseText = `Thank you, ${cleanedName}! Welcome to City Health Clinic. How may we assist you today?`;
+            responseText = `Namaste, ${cleanedName}! 🙏 City Health Clinic mein aapka swagat hai. Aaj main aapki kaise madad kar sakti hoon?`;
             
             await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
             await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
             await patients.updateFlowState(chatId, 'idle');
             
             await sendButtons(chatId, responseText, [
-                { id: 'book_appointment', text: '📅 Book Appointment' },
-                { id: 'check_status', text: '📋 Check My Token' },
-                { id: 'clinic_timings', text: '⏰ Clinic Timings' }
-            ], clinicData?.clinicInfo?.name || 'City Health Clinic');
+                { id: 'book_appointment', text: '📅 Token book karein' },
+                { id: 'check_status', text: '🎫 Token status check karein' },
+                { id: 'clinic_timings', text: '⏰ Timings, fees & location' }
+            ], clinicData?.clinic_info?.name || 'City Health Clinic');
             return;
         }
 
@@ -734,8 +734,20 @@ router.post('/', async (req, res) => {
         // TIER 1: Pre-fixed Administrative (Priority 2)
         // Note: check_availability is moved to Tier 2 for generative temporal reasoning
         if (routingTier === 1 || (patient.currentFlowState === 'idle' && ['greeting', 'clinic_address', 'check_status', 'general_query'].includes(intent))) {
+            if (intent === 'greeting') {
+                responseText = `Namaste, ${patientName}! 🙏 Wapas swagat hai. Aaj main aapki kaise madad kar sakti hoon?`;
+                await patients.addMessageToHistory(chatId, { role: 'user', content: patientMessage });
+                await patients.addMessageToHistory(chatId, { role: 'assistant', content: responseText });
+                
+                await sendButtons(chatId, responseText, [
+                    { id: 'book_appointment', text: '📅 Token book karein' },
+                    { id: 'check_status', text: '🎫 Token status check karein' },
+                    { id: 'clinic_timings', text: '⏰ Timings, fees & location' }
+                ], clinicData?.clinic_info?.name || 'City Health Clinic');
+                return res.status(200).json({ success: true, handled: true, tier: 1 });
+            }
+
             const staticTemplates = {
-                "greeting": `Namastey sir/ma'am, welcome to ${clinicData?.clinic_info?.name || 'City Health Clinic'}, me aapki kese help kar sakta hu? Main appointments, clinic timings, address, aur fees ki details de sakta hu.`,
                 "clinic_address": `Humara address hai: ${clinicData?.clinic_info?.address || '15 Hospital Road, Udaipur'}.`,
                 "check_status": liveStatus 
                     ? `Aapka Token #${liveStatus.tokenNumber} hai. Currently serving: #${liveStatus.currentToken}. Estimated wait: ~${liveStatus.estimatedWaitMinutes} mins.`
@@ -1130,6 +1142,118 @@ router.post('/', async (req, res) => {
             responseText = await generateResponse(history, instanceId, clinicData, extraContext);
             nextState = patient.currentFlowState;
         }
+        // SOP v2: Step 2 — Reason for Visit
+        else if (patient.currentFlowState === 'awaiting_visit_reason') {
+            const visitReason = patientMessage.trim();
+            const clinicDepartments = getClinicDepartments(clinicData);
+            
+            // Skip department selection if single-department clinic
+            if (clinicDepartments.length <= 1) {
+                const department = clinicDepartments[0] || 'General Physician';
+                const queueState = await queueService.getQueueState(clinicId, department);
+                const tokenNumber = (queueState.lastIssuedToken || 0) + 1;
+                const estimatedWait = queueService.estimateWait(queueState, tokenNumber);
+                const peopleAhead = Math.max(tokenNumber - (queueState.currentToken || 0) - 1, 0);
+
+                responseText = `Aapki details:\n` +
+                    `🏥 *Department:* ${department}\n` +
+                    `📝 *Reason:* ${visitReason}\n` +
+                    `👥 *Abhi line mein:* ${peopleAhead} log aapse pehle hain\n` +
+                    `⏳ *Andaazan wait:* ~${estimatedWait} min\n\n` +
+                    `Kya main aapka token confirm kar doon?`;
+                
+                nextState = 'awaiting_live_token_confirmation';
+                await patients.createOrUpdate(chatId, { 
+                    currentFlowState: nextState,
+                    bookingDetails: { department, reason: visitReason }
+                });
+                
+                await sendButtons(chatId, responseText, [
+                    { id: 'confirm_yes', text: '✅ Haan, Confirm' },
+                    { id: 'confirm_no', text: '❌ Nahi, Cancel' }
+                ], clinicData?.clinic_info?.name || 'City Health Clinic');
+                return res.status(200).json({ success: true, handled: true });
+            } else {
+                responseText = `Aapko kis department mein dikhana hai?`;
+                nextState = 'awaiting_department_selection';
+                await patients.createOrUpdate(chatId, { 
+                    currentFlowState: nextState,
+                    bookingDetails: { reason: visitReason }
+                });
+                
+                const deptButtons = clinicDepartments.slice(0, 3).map(dept => ({
+                    id: `dept_${dept.replace(/\s+/g, '_')}`,
+                    text: dept
+                }));
+                
+                await sendButtons(chatId, responseText, deptButtons, clinicData?.clinic_info?.name || 'City Health Clinic');
+                return res.status(200).json({ success: true, handled: true });
+            }
+        }
+        // SOP v2: Step 2 — Capturing Department
+        else if (patient.currentFlowState === 'awaiting_department_selection') {
+            const department = patientMessage.replace(/^dept_/, '').replace(/_/g, ' ');
+            const visitReason = patient.bookingDetails?.reason || 'Consultation';
+            
+            const queueState = await queueService.getQueueState(clinicId, department);
+            const tokenNumber = (queueState.lastIssuedToken || 0) + 1;
+            const estimatedWait = queueService.estimateWait(queueState, tokenNumber);
+            const peopleAhead = Math.max(tokenNumber - (queueState.currentToken || 0) - 1, 0);
+
+            responseText = `Aapki details:\n` +
+                `🏥 *Department:* ${department}\n` +
+                `📝 *Reason:* ${visitReason}\n` +
+                `👥 *Abhi line mein:* ${peopleAhead} log aapse pehle hain\n` +
+                `⏳ *Andaazan wait:* ~${estimatedWait} min\n\n` +
+                `Kya main aapka token confirm kar doon?`;
+            
+            nextState = 'awaiting_live_token_confirmation';
+            await patients.createOrUpdate(chatId, { 
+                currentFlowState: nextState,
+                bookingDetails: { department, reason: visitReason }
+            });
+            
+            await sendButtons(chatId, responseText, [
+                { id: 'confirm_yes', text: '✅ Haan, Confirm' },
+                { id: 'confirm_no', text: '❌ Nahi, Cancel' }
+            ], clinicData?.clinic_info?.name || 'City Health Clinic');
+            return res.status(200).json({ success: true, handled: true });
+        }
+        // SOP v2: Step 3 — Confirmation
+        else if (patient.currentFlowState === 'awaiting_live_token_confirmation') {
+            if (isAffirmative(patientMessage)) {
+                const bookingDetails = patient.bookingDetails || {};
+                const booking = await queueService.bookToken({
+                    clinicId, 
+                    chatId, 
+                    patientName, 
+                    department: bookingDetails.department,
+                    phone: senderPhone,
+                    reason: bookingDetails.reason
+                });
+
+                responseText = `✅ Aapka token book ho gaya hai!\n` +
+                    `*Token Number: #${booking.tokenNumber}*\n` +
+                    `*Ab serve ho raha hai: #${booking.currentToken}*\n` +
+                    `Kripya time se pehle pahunch jaayein — reception par apna token number bata dijiye.\n\n` +
+                    `💡 Kabhi bhi "Status" likh kar apni line check kar sakte hain, ya "Cancel" likh kar token cancel kar sakte hain.`;
+                
+                nextState = 'idle';
+                await patients.createOrUpdate(chatId, { currentFlowState: nextState, bookingDetails: null });
+                await sendMessage(chatId, responseText);
+                
+                // SOP v2: Step 5 — Anything Else?
+                const followUp = `Kya aapko koi aur jaankari chahiye — parking, payment, ya kuch aur?`;
+                await sendMessage(chatId, followUp);
+                return res.status(200).json({ success: true, handled: true });
+            } else {
+                responseText = `Proposed token cancel kar diya gaya hai. Jab aap ready hon, kripya dobara message karein.`;
+                nextState = 'idle';
+                await patients.createOrUpdate(chatId, { currentFlowState: nextState, bookingDetails: null });
+                await sendMessage(chatId, responseText);
+                return res.status(200).json({ success: true, handled: true });
+            }
+        }
         else if (intent === 'check_availability') {
             const requestedDate = parseAppointmentDate(patientMessage);
             const department = resolveDepartment(entities, clinicData);
@@ -1503,23 +1627,21 @@ router.post('/', async (req, res) => {
                         }
                         logger.info(`[Booking] Routed future-date request for ${chatId} during open hours: ${date} (${department}).`);
                     } else {
-                        const doctorName = entities?.doctor || null;
-                        const booking = await queueService.bookToken({
-                            clinicId, chatId, patientName, department,
-                            phone: senderPhone,
-                            reason: (entities?.symptoms || []).join(', ') || patientMessage.slice(0, 200),
-                            doctorName,
+                        // SOP v2: Live Token flow — Step 2 (Reason for Visit)
+                        responseText = `Main aapka aaj ka token book kar sakti hoon. Kripya batayein, aap doctor ko kis wajah se dikhana chahte hain? (Short mein batayein, jaise "Fever", "Back pain", etc.)`;
+                        nextState = 'awaiting_visit_reason';
+                        await patients.createOrUpdate(chatId, { 
+                            currentFlowState: nextState, 
+                            bookingDetails: { department, doctorName } 
                         });
-                        const waiting = Math.max(booking.tokenNumber - booking.currentToken, 0);
-
-                        const docLabel = doctorName ? ` (Dr. ${doctorName.replace(/^dr\.?\s*/i, '')})` : '';
-                        responseText = `✅ *Token #${booking.tokenNumber} booked* for ${department}${docLabel}.\n` +
-                            `👉 Now serving: #${booking.currentToken}\n` +
-                            (waiting > 0
-                                ? `⏳ Estimated wait: ~${booking.estimatedWaitMinutes} min.\n`
-                                : `You're next in line!\n`) +
-                            `Reply "Status" anytime to check your position.`;
-                        nextState = 'idle';
+                        
+                        // Add buttons for common reasons
+                        await sendButtons(chatId, responseText, [
+                            { id: 'reason_fever', text: 'Fever/Cold' },
+                            { id: 'reason_consultation', text: 'General Consultation' },
+                            { id: 'reason_followup', text: 'Follow-up' }
+                        ], clinicData?.clinic_info?.name || 'City Health Clinic');
+                        return res.status(200).json({ success: true, handled: true });
                     }
                 }
             }
