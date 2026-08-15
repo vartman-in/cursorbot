@@ -65,7 +65,32 @@ const patients = {
     }
 };
 
+/**
+ * Appointment Collection Operations
+ */
+const appointments = {
+    async getUpcoming(hours) {
+        try {
+            if (!db) return [];
+            const now = new Date();
+            const future = new Date(now.getTime() + (hours * 60 * 60 * 1000));
+            
+            const snapshot = await db.collection('appointments')
+                .where('dateTime', '>=', now)
+                .where('dateTime', '<=', future)
+                .where('status', 'in', ['booked', 'confirmed'])
+                .get();
+            
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error(`Error getting upcoming appointments:`, error);
+            return [];
+        }
+    }
+};
+
 module.exports = {
     patients,
+    appointments,
     db
 };
