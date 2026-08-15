@@ -5,7 +5,6 @@ const GREEN_API_ID_INSTANCE = process.env.INSTANCE_ID || process.env.GREEN_API_I
 const GREEN_API_API_TOKEN_INSTANCE = process.env.INSTANCE_TOKEN || process.env.GREEN_API_TOKEN || process.env.GREEN_API_API_TOKEN_INSTANCE;
 
 // Resilient host detection: Green API uses cluster-specific subdomains (e.g., 7103, 7107)
-// We extract the first 4 digits of the instance ID to determine the correct cluster.
 const clusterId = String(GREEN_API_ID_INSTANCE || '').substring(0, 4);
 const GREEN_API_HOST = process.env.GREEN_API_HOST || (clusterId ? `https://${clusterId}.api.greenapi.com` : 'https://api.green-api.com');
 
@@ -13,10 +12,8 @@ const GREEN_API_HOST = process.env.GREEN_API_HOST || (clusterId ? `https://${clu
  * Sends a standard text message via Green API.
  */
 async function sendMessage(chatId, message) {
-    // Note: Using the dynamic GREEN_API_HOST rather than hardcoding 7107.api.greenapi.com
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendMessage/${GREEN_API_API_TOKEN_INSTANCE}`;
     
-    // Dynamically assign the arguments to the payload
     const payload = {
         chatId: chatId,
         message: message
@@ -44,22 +41,17 @@ async function sendMessage(chatId, message) {
 
 /**
  * Sends a media file via URL to a WhatsApp chat.
- * Expects a direct, raw image URL (handled by urlHelper).
  */
 async function sendMediaByUrl(chatId, fileUrl, fileName, caption = "") {
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendFileByUrl/${GREEN_API_API_TOKEN_INSTANCE}`;
 
-    // --- Resilient fileName Generation ---
     let safeFileName = "sneaker-image.jpeg";
-
     if (fileName && typeof fileName === 'string') {
         safeFileName = fileName.replace(/[^a-zA-Z0-9-.]/g, '_');
         if (!safeFileName.match(/\.(jpg|jpeg|png)$/i)) {
             safeFileName = safeFileName.replace(/\.+$/, '') + '.jpeg';
         }
     }
-
-    console.log(`[Green API] Sending media: ${fileUrl} as ${safeFileName}`);
 
     const payload = {
         chatId: chatId,
@@ -85,15 +77,6 @@ async function sendMediaByUrl(chatId, fileUrl, fileName, caption = "") {
         throw error;
     }
 }
-
-module.exports = {
-    sendMediaByUrl,
-    sendMessage,
-    sendPoll,
-    getSettings,
-    setSettings,
-    sendInteractiveButtonsReply
-};
 
 /**
  * Gets instance settings from Green API.
@@ -128,7 +111,7 @@ async function setSettings(settings) {
 }
 
 /**
- * Sends a poll via Green API (Used as a robust alternative to buttons).
+ * Sends a poll via Green API.
  */
 async function sendPoll(chatId, message, options, multipleAnswers = false) {
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendPoll/${GREEN_API_API_TOKEN_INSTANCE}`;
@@ -162,7 +145,6 @@ async function sendPoll(chatId, message, options, multipleAnswers = false) {
 
 /**
  * Sends modern interactive buttons via Green API (SendInteractiveButtonsReply).
- * This is the modern way to send quick reply buttons.
  */
 async function sendInteractiveButtonsReply(chatId, body, buttons, header = "", footer = "City Health Clinic") {
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendInteractiveButtonsReply/${GREEN_API_API_TOKEN_INSTANCE}`;
@@ -201,7 +183,7 @@ async function sendInteractiveButtonsReply(chatId, body, buttons, header = "", f
 
 /**
  * Sends interactive buttons via Green API.
- * Tries modern SendInteractiveButtonsReply first, then falls back to Polls, then legacy Buttons, then Text.
+ * Tries modern SendInteractiveButtonsReply first, then legacy sendButtons, then text fallback.
  */
 async function sendButtons(chatId, message, buttons, footer = "City Health Clinic") {
     try {
@@ -209,16 +191,10 @@ async function sendButtons(chatId, message, buttons, footer = "City Health Clini
         console.log(`[Green API] Attempting sendInteractiveButtonsReply for ${chatId}`);
         return await sendInteractiveButtonsReply(chatId, message, buttons, "", footer);
     } catch (error) {
-        console.warn(`[Green API] sendInteractiveButtonsReply failed, trying sendPoll:`, error.message);
+        console.warn(`[Green API] sendInteractiveButtonsReply failed, trying legacy sendButtons:`, error.message);
         
         try {
-            // 2. Fallback to Polls (very reliable)
-            const pollOptions = buttons.map(btn => btn.text);
-            return await sendPoll(chatId, message, pollOptions);
-        } catch (pollError) {
-            console.warn(`[Green API] sendPoll failed, trying legacy sendButtons:`, pollError.message);
-            
-            // 3. Final legacy fallback
+            // 2. Fallback to legacy sendButtons
             const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendButtons/${GREEN_API_API_TOKEN_INSTANCE}`;
             const formattedButtons = buttons.map((btn, index) => ({
                 buttonId: String(btn.id || index + 1),
@@ -232,23 +208,21 @@ async function sendButtons(chatId, message, buttons, footer = "City Health Clini
                 footer: footer || ""
             };
 
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-                if (!response.ok) {
-                    console.warn(`[Green API] sendButtons failed (${response.status}), falling back to text message.`);
-                    return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
-                }
-
-                return await response.json();
-            } catch (innerError) {
-                console.error("[Green API] Final fallback to text message:", innerError.message);
+            if (!response.ok) {
+                console.warn(`[Green API] sendButtons failed (${response.status}), falling back to text message.`);
                 return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
             }
+
+            return await response.json();
+        } catch (innerError) {
+            console.error("[Green API] Final fallback to text message:", innerError.message);
+            return await sendMessage(chatId, `${message}\n\nOptions:\n` + buttons.map((b, i) => `${i+1}. ${b.text}`).join('\n'));
         }
     }
 }
@@ -259,7 +233,6 @@ async function sendButtons(chatId, message, buttons, footer = "City Health Clini
 async function sendListMessage(chatId, message, title, buttonText, sections, footer = "City Health Clinic") {
     const url = `${GREEN_API_HOST}/waInstance${GREEN_API_ID_INSTANCE}/sendListMessage/${GREEN_API_API_TOKEN_INSTANCE}`;
 
-    // Ensure sections and rows follow Green API's expected structure
     const formattedSections = (sections || []).map(section => ({
         title: section.title || "Options",
         rows: (section.rows || []).map(row => ({
@@ -306,6 +279,13 @@ async function sendListMessage(chatId, message, title, buttonText, sections, foo
     }
 }
 
-// Export new methods
-module.exports.sendButtons = sendButtons;
-module.exports.sendListMessage = sendListMessage;
+module.exports = {
+    sendMediaByUrl,
+    sendMessage,
+    sendPoll,
+    getSettings,
+    setSettings,
+    sendInteractiveButtonsReply,
+    sendButtons,
+    sendListMessage
+};
