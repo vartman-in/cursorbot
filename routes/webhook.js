@@ -551,23 +551,33 @@ router.post('/', async (req, res) => {
                 }
             }
         } else if (messageData.typeMessage === 'interactiveButtonsReply' && messageData.interactiveButtonsReply) {
-            patientMessage = messageData.interactiveButtonsReply.buttonId || messageData.interactiveButtonsReply.buttonText;
+            // Prefer text for LLM/Classifier, fallback to ID
+            patientMessage = messageData.interactiveButtonsReply.buttonText || messageData.interactiveButtonsReply.buttonId;
             logger.info(`[Webhook] Extracted interactiveButtonsReply from ${senderPhone}: "${patientMessage}"`);
+        } else if (messageData.typeMessage === 'buttonsResponseMessage' || messageData.buttonsResponseMessageData) {
+            const btnData = messageData.buttonsResponseMessageData || messageData.buttonsResponseMessage;
+            patientMessage = btnData.selectedDisplayText || btnData.selectedButtonText || btnData.selectedButtonId || "";
+            logger.info(`[Webhook] Extracted buttonsResponseMessage from ${senderPhone}: "${patientMessage}"`);
         } else if (messageData.typeMessage === 'templateButtonsReplyMessage' && messageData.templateButtonReplyMessage) {
-            patientMessage = messageData.templateButtonReplyMessage.selectedId || messageData.templateButtonReplyMessage.selectedDisplayText;
+            patientMessage = messageData.templateButtonReplyMessage.selectedDisplayText || messageData.templateButtonReplyMessage.selectedId;
             logger.info(`[Webhook] Extracted templateButtonsReplyMessage from ${senderPhone}: "${patientMessage}"`);
+        } else if (messageData.typeMessage === 'listResponseMessage' || messageData.listResponseMessageData) {
+            const listData = messageData.listResponseMessageData || messageData.listResponseMessage;
+            patientMessage = listData.title || listData.selectedRowId || "";
+            logger.info(`[Webhook] Extracted listResponseMessage from ${senderPhone}: "${patientMessage}"`);
         } else {
             // Standard message extraction
             patientMessage = 
                 messageData.textMessageData?.textMessage || 
                 messageData.extendedTextMessageData?.text || 
-                messageData.buttonsResponseMessageData?.selectedButtonId ||
-                messageData.buttonsResponseMessageData?.selectedButtonText ||
-                messageData.listResponseMessageData?.selectedRowId ||
-                messageData.listResponseMessageData?.title ||
                 messageData.fileMessageData?.caption ||
                 "";
         }
+
+        // 🚀 MAP NUMERIC BUTTON IDS TO INTENTS (Fallback for ID-only replies)
+        if (patientMessage === '1') patientMessage = 'book_appointment';
+        else if (patientMessage === '2') patientMessage = 'check_status';
+        else if (patientMessage === '3') patientMessage = 'timings_fees_location';
 
         // 🚀 EXTRACT THE INSTANCE ID FOR THE MULTI-TENANT CONTEXT
         const instanceId = body.instanceData?.idInstance;
